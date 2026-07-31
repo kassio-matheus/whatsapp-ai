@@ -25,13 +25,6 @@ TOOL_GUIDANCE = (
 
 MAX_REMOTE_CALLS = 10
 
-_FORBIDDEN_ERROR: dict[str, object] = {
-    "error": (
-        "This route is protected by AIProtected and cannot be called by AI agents. "
-        "Stop calling it and proceed without it."
-    )
-}
-
 
 class OpenAI(AIPlatform):
     def __init__(self, api_key: str):
@@ -86,10 +79,6 @@ class OpenAI(AIPlatform):
         return {"error": text} if result.isError else {"result": text}
 
     @staticmethod
-    def _is_ai_forbidden(serialized: dict[str, object]) -> bool:
-        return "cannot be accessed by AI agents" in json.dumps(serialized)
-
-    @staticmethod
     def _response_item_to_input(item: Any) -> dict[str, Any]:
         return item.model_dump(exclude_none=True)
 
@@ -117,7 +106,6 @@ class OpenAI(AIPlatform):
             tool_definitions = [self._to_openai_tool(tool) for tool in mcp_tools]
             allowed_tool_names = {tool.name for tool in mcp_tools}
 
-            forbidden_tools: set[str] = set()
             failed_calls: dict[tuple[str, str], dict[str, object]] = {}
 
             response = await cast(Any, client.responses.create)(
@@ -154,11 +142,6 @@ class OpenAI(AIPlatform):
                         serialized = {"error": "Tool is not available"}
                         console.print(
                             f"[yellow]>>> TOOL (unavailable, skipped): {name}[/]"
-                        )
-                    elif name in forbidden_tools:
-                        serialized = _FORBIDDEN_ERROR
-                        console.print(
-                            f"[yellow]>>> TOOL (forbidden, skipped): {name}[/]"
                         )
                     elif (name, args_key) in failed_calls:
                         serialized = failed_calls[(name, args_key)]
@@ -198,10 +181,7 @@ class OpenAI(AIPlatform):
                             console.print(f"[bold red]<<< TOOL ERROR: {serialized}[/]")
 
                         if is_error:
-                            if self._is_ai_forbidden(serialized):
-                                forbidden_tools.add(name)
-                            else:
-                                failed_calls[(name, args_key)] = serialized
+                            failed_calls[(name, args_key)] = serialized
 
                     function_outputs.append(
                         {
@@ -229,14 +209,7 @@ class OpenAI(AIPlatform):
                             "strict": True,
                         }
                     },
-                    tools=cast(
-                        Any,
-                        [
-                            tool
-                            for tool in tool_definitions
-                            if tool["name"] not in forbidden_tools
-                        ],
-                    ),
+                    tools=cast(Any, tool_definitions),
                 )
 
         return self._parse_response(response)

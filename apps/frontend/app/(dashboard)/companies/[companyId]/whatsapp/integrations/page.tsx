@@ -36,6 +36,7 @@ import { PageHeader } from "@/components/ui/page-header"
 import {
   IntegrationActiveToggle,
   IntegrationDialog,
+  getWhatsAppAdapterLabel,
 } from "@/components/whatsapp/integration-dialog"
 import { WhatsAppSectionTabs } from "@/components/whatsapp/whatsapp-section-tabs"
 import {
@@ -177,8 +178,8 @@ export default function IntegrationsPage() {
                       {integration.integration_type}
                     </Badge>
                   </TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    {integration.adapter}
+                  <TableCell className="text-xs text-muted-foreground">
+                    {getWhatsAppAdapterLabel(integration.adapter)}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {integration.phone_number ?? "—"}

@@ -25,8 +25,41 @@ import { Switch } from "@workspace/ui/components/switch"
 
 import { api, type IntegrationType, type WhatsAppIntegration } from "@/lib/api"
 
-const ADAPTERS = ["whatsapp_cloud", "baileys", "venom", "whatsapp_web"]
-const DEFAULT_ADAPTER = "whatsapp_cloud"
+const ADAPTER_OPTIONS: Record<
+  IntegrationType,
+  Array<{ value: string; label: string }>
+> = {
+  official: [
+    {
+      value: "whatsapp_cloud",
+      label: "Cloud API",
+    },
+    {
+      value: "whatsapp_cloud_coexistence",
+      label: "Coexistence",
+    },
+  ],
+  unofficial: [
+    { value: "baileys", label: "Baileys" },
+    { value: "whatsapp_web", label: "whatsapp-web.js" },
+    { value: "venom", label: "Venom Bot" },
+  ],
+}
+
+const DEFAULT_ADAPTER_BY_TYPE: Record<IntegrationType, string> = {
+  official: "whatsapp_cloud",
+  unofficial: "baileys",
+}
+
+function getWhatsAppAdapterLabel(adapter: string) {
+  for (const options of Object.values(ADAPTER_OPTIONS)) {
+    const option = options.find((item) => item.value === adapter)
+    if (option) {
+      return option.label
+    }
+  }
+  return adapter
+}
 
 function IntegrationDialog({
   open,
@@ -53,7 +86,9 @@ function IntegrationDialog({
 }) {
   const [name, setName] = React.useState("")
   const [type, setType] = React.useState<IntegrationType>("official")
-  const [adapter, setAdapter] = React.useState<string>(DEFAULT_ADAPTER)
+  const [adapter, setAdapter] = React.useState<string>(
+    DEFAULT_ADAPTER_BY_TYPE.official,
+  )
   const [phone, setPhone] = React.useState("")
   const [externalAccountId, setExternalAccountId] = React.useState("")
   const [config, setConfig] = React.useState("")
@@ -65,8 +100,9 @@ function IntegrationDialog({
       return
     }
     setName(integration?.name ?? "")
-    setType(integration?.integration_type ?? "official")
-    setAdapter(integration?.adapter ?? DEFAULT_ADAPTER)
+    const nextType = integration?.integration_type ?? "official"
+    setType(nextType)
+    setAdapter(integration?.adapter ?? DEFAULT_ADAPTER_BY_TYPE[nextType])
     setPhone(integration?.phone_number ?? "")
     setExternalAccountId(integration?.external_account_id ?? "")
     setConfig(
@@ -155,17 +191,21 @@ function IntegrationDialog({
                 <Label>Type</Label>
                 <Select
                   items={[
-                    { value: "official", label: "Official (Cloud API)" },
+                    { value: "official", label: "Official" },
                     { value: "unofficial", label: "Unofficial" },
                   ]}
                   value={type}
-                  onValueChange={(value) => setType(value as IntegrationType)}
+                  onValueChange={(value) => {
+                    const nextType = value as IntegrationType
+                    setType(nextType)
+                    setAdapter(DEFAULT_ADAPTER_BY_TYPE[nextType])
+                  }}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="official">Official (Cloud API)</SelectItem>
+                    <SelectItem value="official">Official</SelectItem>
                     <SelectItem value="unofficial">Unofficial</SelectItem>
                   </SelectContent>
                 </Select>
@@ -173,10 +213,7 @@ function IntegrationDialog({
               <div className="flex flex-col gap-2">
                 <Label>Adapter</Label>
                 <Select
-                  items={ADAPTERS.map((adapter) => ({
-                    value: adapter,
-                    label: adapter,
-                  }))}
+                  items={ADAPTER_OPTIONS[type]}
                   value={adapter}
                   onValueChange={(value) => setAdapter(String(value))}
                 >
@@ -184,9 +221,9 @@ function IntegrationDialog({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {ADAPTERS.map((item) => (
-                      <SelectItem key={item} value={item}>
-                        {item}
+                    {ADAPTER_OPTIONS[type].map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -278,4 +315,8 @@ function IntegrationActiveToggle({
   )
 }
 
-export { IntegrationDialog, IntegrationActiveToggle }
+export {
+  IntegrationDialog,
+  IntegrationActiveToggle,
+  getWhatsAppAdapterLabel,
+}
