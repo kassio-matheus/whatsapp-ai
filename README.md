@@ -10,7 +10,8 @@ O projeto deve ser publicado como dois serviços dentro do mesmo projeto Railway
 - `backend`: serviço FastAPI, usando `/apps/backend` como Root Directory.
 
 Os arquivos de configuração já estão em `apps/frontend/railway.json` e
-`apps/backend/railway.json`. Ao usar a importação automática de monorepo do
+`apps/backend/railway.json`. O backend também possui `apps/backend/railpack.json`
+para incluir a biblioteca nativa `libpq5` no runtime. Ao usar a importação automática de monorepo do
 Railway, eles são detectados por pacote. Se configurar os serviços manualmente,
 defina os Config Files como `/apps/frontend/railway.json` e
 `/apps/backend/railway.json`, respectivamente.
@@ -26,6 +27,8 @@ SQLALCHEMY_DATABASE_URI=${{Postgres.DATABASE_URL}}
 BACKEND_CORS_ORIGINS=["https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}"]
 ALLOWED_HOSTS=["${{RAILWAY_PUBLIC_DOMAIN}}","healthcheck.railway.app"]
 FRONTEND_HOST=https://${{frontend.RAILWAY_PUBLIC_DOMAIN}}
+# Alternativa caso o Railpack não detecte automaticamente o railpack.json:
+# RAILPACK_DEPLOY_APT_PACKAGES=libpq5
 ```
 
 Troque `Postgres` e `frontend` pelos nomes exatos dos serviços no seu projeto.
