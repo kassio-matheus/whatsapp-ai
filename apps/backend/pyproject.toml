@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Kássio Matheus", email = "kassiomatheus23@gmail.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.18.5",
     "bcrypt>=5.0.0",
