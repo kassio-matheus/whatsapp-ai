@@ -24,4 +24,4 @@ ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
 
 # ajuste "app.main:app" para o caminho real do seu módulo, se for diferente
-CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --forwarded-allow-ips="*""]
+CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
