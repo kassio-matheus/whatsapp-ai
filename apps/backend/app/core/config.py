@@ -9,8 +9,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "API"
     API_V1_PREFIX: str = "/api/v1"
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
-    ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
-    print(f"ALLOWED_HOSTS carregado: {ALLOWED_HOSTS}")
+    ALLOWED_HOSTS: list[str] = [""]
     OPENAI_API_KEY: str = ""
     SECRET_KEY: str = Field(min_length=32)
     SQLALCHEMY_DATABASE_URI: str = Field(min_length=1)
@@ -56,3 +55,5 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+print(f"ALLOWED_HOSTS: {settings.ALLOWED_HOSTS}")
