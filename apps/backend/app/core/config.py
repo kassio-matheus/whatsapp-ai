@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     ALLOWED_HOSTS: list[str] = ["localhost", "127.0.0.1"]
+    print(f"ALLOWED_HOSTS carregado: {ALLOWED_HOSTS}")
     OPENAI_API_KEY: str = ""
     SECRET_KEY: str = Field(min_length=32)
     SQLALCHEMY_DATABASE_URI: str = Field(min_length=1)
@@ -39,15 +40,18 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_security_settings(self) -> "Settings":
+
         if self.ENVIRONMENT.lower() == "production":
             if self.SECRET_KEY.strip() in {"", "change-me", "secret"}:
                 raise ValueError("SECRET_KEY must be configured in production")
             if "*" in self.ALLOWED_HOSTS:
-                raise ValueError("ALLOWED_HOSTS cannot contain '*' in production")
+                raise ValueError(
+                    "ALLOWED_HOSTS cannot contain '*' in production")
             if "*" in self.BACKEND_CORS_ORIGINS:
                 raise ValueError("CORS cannot allow '*' in production")
             if not self.SQLALCHEMY_DATABASE_URI:
-                raise ValueError("SQLALCHEMY_DATABASE_URI is required in production")
+                raise ValueError(
+                    "SQLALCHEMY_DATABASE_URI is required in production")
         return self
 
 
