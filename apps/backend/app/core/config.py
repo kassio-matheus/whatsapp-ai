@@ -55,5 +55,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-print(f"ALLOWED_HOSTS: {settings.ALLOWED_HOSTS}")

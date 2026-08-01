@@ -67,9 +67,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-if settings.ENVIRONMENT.lower() == "production":
-    app.add_middleware(HTTPSRedirectMiddleware)
-
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=settings.ALLOWED_HOSTS,
