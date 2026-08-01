@@ -55,8 +55,8 @@ app = FastAPI(
         },
         {
             "name": "WhatsApp",
-            "description": "Provider-agnostic WhatsApp instances, real-time inbox, "
-            "contacts, conversations, and messages.",
+            "description": "Provider-agnostic WhatsApp integrations, contacts, "
+            "conversations, and messages.",
         },
         {
             "name": "WhatsApp Webhooks",
@@ -66,6 +66,9 @@ app = FastAPI(
     ],
     lifespan=lifespan,
 )
+
+if settings.ENVIRONMENT.lower() == "production":
+    app.add_middleware(HTTPSRedirectMiddleware)
 
 app.add_middleware(
     TrustedHostMiddleware,

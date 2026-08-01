@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field as SQLField
 from sqlmodel import SQLModel
@@ -41,8 +41,17 @@ class MessageStatus(str, Enum):
     FAILED = "failed"
 
 
+INTERNAL_MESSAGE_TYPES: tuple[str, ...] = (
+    "system",
+    "reaction",
+    "template",
+    "unknown",
+    "ephemeral",
+)
+
+
 class WhatsAppIntegration(SQLModel, table=True):
-    """A provider-agnostic WhatsApp instance owned by a company."""
+    """A provider-agnostic WhatsApp connection owned by a company."""
 
     __tablename__ = "whatsapp_integrations"
     __table_args__ = (
@@ -258,18 +267,6 @@ class WhatsAppIntegrationResponse(BaseModel):
     updated_at: datetime = Field(description="Last update timestamp.")
 
 
-class WhatsAppInstanceCreate(WhatsAppIntegrationCreate):
-    """Payload for registering a WhatsApp instance."""
-
-
-class WhatsAppInstanceUpdate(WhatsAppIntegrationUpdate):
-    """Payload for updating a WhatsApp instance."""
-
-
-class WhatsAppInstanceResponse(WhatsAppIntegrationResponse):
-    """Public representation of a WhatsApp instance."""
-
-
 class WhatsAppCloudApiCredentials(BaseModel):
     """Credentials and identifiers required by Meta's Cloud API."""
 
@@ -321,7 +318,7 @@ class WhatsAppCloudApiCredentials(BaseModel):
     api_version: str = Field(
         default="v25.0",
         pattern=r"^v\d+\.\d+$",
-        description="Graph API version used for this instance.",
+        description="Graph API version used for this connection.",
         json_schema_extra={"examples": ["v25.0"]},
     )
 
@@ -343,9 +340,9 @@ class WhatsAppCloudApiCredentials(BaseModel):
 
 
 class WhatsAppCloudApiCreate(BaseModel):
-    """Payload for creating and verifying a Meta Cloud API instance."""
+    """Payload for creating and verifying a Meta Cloud API connection."""
 
-    company_id: uuid.UUID = Field(description="Company that owns the instance.")
+    company_id: uuid.UUID = Field(description="Company that owns the connection.")
     name: str = Field(
         min_length=1,
         max_length=255,
@@ -362,7 +359,7 @@ class WhatsAppCloudApiCreate(BaseModel):
 
 
 class WhatsAppCloudApiUpdate(BaseModel):
-    """Payload for updating and re-verifying a Meta Cloud API instance."""
+    """Payload for updating and re-verifying a Meta Cloud API connection."""
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     credentials: WhatsAppCloudApiCredentials
@@ -370,7 +367,7 @@ class WhatsAppCloudApiUpdate(BaseModel):
 
 
 class WhatsAppCloudApiConnectionInfo(BaseModel):
-    """Non-secret verification data returned after talking to Meta."""
+    """Non-secret connection data returned after talking to Meta."""
 
     app_id: str = Field(description="Verified Meta app ID.")
     business_account_id: str = Field(description="Verified WABA ID.")
@@ -397,19 +394,16 @@ class WhatsAppCloudApiConnectionInfo(BaseModel):
 
 
 class WhatsAppCloudApiConnectResponse(BaseModel):
-    """Response for a verified Meta Cloud API instance."""
+    """Response for a verified Meta Cloud API connection."""
 
-    instance: WhatsAppInstanceResponse
-    verification: WhatsAppCloudApiConnectionInfo
+    integration: WhatsAppIntegrationResponse
+    connection: WhatsAppCloudApiConnectionInfo
 
 
 class WhatsAppContactCreate(BaseModel):
     """Payload for creating a WhatsApp contact."""
 
-    instance_id: uuid.UUID = Field(
-        description="WhatsApp instance the contact belongs to.",
-        validation_alias=AliasChoices("instance_id", "integration_id"),
-    )
+    integration_id: uuid.UUID = Field(description="Integration the contact belongs to.")
     external_id: str | None = Field(
         default=None,
         max_length=255,
@@ -460,7 +454,7 @@ class WhatsAppContactResponse(BaseModel):
 
     id: uuid.UUID = Field(description="Contact identifier.")
     company_id: uuid.UUID = Field(description="Owning company identifier.")
-    instance_id: uuid.UUID = Field(description="WhatsApp instance identifier.")
+    integration_id: uuid.UUID = Field(description="Integration identifier.")
     external_id: str | None = Field(description="Provider-side contact identifier.")
     phone_number: str = Field(description="Contact phone number.")
     name: str | None = Field(description="Contact display name.")
@@ -475,10 +469,7 @@ class WhatsAppContactResponse(BaseModel):
 class WhatsAppConversationCreate(BaseModel):
     """Payload for creating a WhatsApp conversation."""
 
-    instance_id: uuid.UUID = Field(
-        description="WhatsApp instance the conversation uses.",
-        validation_alias=AliasChoices("instance_id", "integration_id"),
-    )
+    integration_id: uuid.UUID = Field(description="Integration the conversation uses.")
     contact_id: uuid.UUID | None = Field(
         default=None, description="Associated contact, if any."
     )
@@ -520,7 +511,7 @@ class WhatsAppConversationResponse(BaseModel):
 
     id: uuid.UUID = Field(description="Conversation identifier.")
     company_id: uuid.UUID = Field(description="Owning company identifier.")
-    instance_id: uuid.UUID = Field(description="WhatsApp instance identifier.")
+    integration_id: uuid.UUID = Field(description="Integration identifier.")
     contact_id: uuid.UUID | None = Field(description="Associated contact, if any.")
     external_id: str | None = Field(
         description="Provider-side conversation identifier."
@@ -594,7 +585,7 @@ class WhatsAppMessageResponse(BaseModel):
 
     id: uuid.UUID = Field(description="Message identifier.")
     company_id: uuid.UUID = Field(description="Owning company identifier.")
-    instance_id: uuid.UUID = Field(description="WhatsApp instance identifier.")
+    integration_id: uuid.UUID = Field(description="Integration identifier.")
     conversation_id: uuid.UUID = Field(description="Conversation identifier.")
     external_id: str | None = Field(description="Provider-side message identifier.")
     direction: MessageDirection = Field(description="Inbound or outbound message.")

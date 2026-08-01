@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Kássio Matheus", email = "kassiomatheus23@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.5",
     "bcrypt>=5.0.0",
@@ -15,12 +15,20 @@ dependencies = [
     "fastmcp>=3.4.5",
     "openai>=2.11.0",
     "opencode-ai>=0.1.0a36",
+    "psycopg2>=2.9.12",
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
     "sqlmodel>=0.0.39",
     "uvicorn[standard]>=0.52.0",
 ]
+
+[project.scripts]
+backend = "backend:main"
+
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
@@ -29,6 +37,3 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.0",
 ]
-
-[tool.uv]
-package = false

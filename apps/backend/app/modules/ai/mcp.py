@@ -11,8 +11,6 @@ from fastmcp import FastMCP
 from fastmcp.client.transports.memory import FastMCPTransport
 from mcp import ClientSession
 
-from app.core.config import settings
-
 _backend_app: Any = None
 
 fastmcp.settings.log_enabled = False
@@ -47,16 +45,11 @@ async def mcp_session(
     if auth_token:
         headers["Authorization"] = f"Bearer {auth_token}"
 
-    host = next(
-        (h for h in settings.ALLOWED_HOSTS if h and not h.startswith("*")),
-        "localhost",
-    )
-
     server = FastMCP.from_fastapi(
         app=_backend_app,
         name="A.I Backend",
         httpx_client_kwargs={
-            "base_url": f"http://{host}",
+            "base_url": "http://localhost",
             "timeout": 60,
             "headers": headers,
         },

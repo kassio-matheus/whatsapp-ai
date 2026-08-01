@@ -9,6 +9,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   LayoutDashboard,
+  LayoutTemplate,
   LogOut,
   MessagesSquare,
   Plus,
@@ -88,6 +89,12 @@ const WHATSAPP_SUB_NAV: NavItem[] = [
     icon: MessagesSquare,
     buildHref: (companyId: string | null | undefined) =>
       `/companies/${companyId ?? ""}/whatsapp/conversations`,
+  },
+  {
+    title: "Templates",
+    icon: LayoutTemplate,
+    buildHref: (companyId: string | null | undefined) =>
+      `/companies/${companyId ?? ""}/whatsapp/templates`,
   },
 ]
 

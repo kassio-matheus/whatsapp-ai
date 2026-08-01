@@ -89,8 +89,6 @@ class RequestProtectionMiddleware(BaseHTTPMiddleware):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    _DOCS_PATHS = {"/docs", "/redoc", "/openapi.json"}
-
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
@@ -106,18 +104,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "Strict-Transport-Security",
                 "max-age=63072000; includeSubDomains",
             )
-            if request.url.path in self._DOCS_PATHS:
-                response.headers.setdefault(
-                    "Content-Security-Policy",
-                    "default-src 'self'; "
-                    "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
-                    "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
-                    "img-src 'self' data: fastapi.tiangolo.com; "
-                    "font-src 'self' data:;",
-                )
-            else:
-                response.headers.setdefault(
-                    "Content-Security-Policy",
-                    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
-                )
+            response.headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+            )
         return response

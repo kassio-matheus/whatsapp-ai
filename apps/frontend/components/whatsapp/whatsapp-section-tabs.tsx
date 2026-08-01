@@ -1,7 +1,12 @@
 "use client"
 
 import Link from "next/link"
-import { MessagesSquare, Smartphone, UserRound } from "lucide-react"
+import {
+  LayoutTemplate,
+  MessagesSquare,
+  Smartphone,
+  UserRound,
+} from "lucide-react"
 
 import { cn } from "@workspace/ui/lib/utils"
 
@@ -10,7 +15,7 @@ function WhatsAppSectionTabs({
   active,
 }: {
   companyId: string
-  active: "instances" | "contacts" | "conversations"
+  active: "instances" | "contacts" | "conversations" | "templates"
 }) {
   const tabs = [
     {
@@ -31,12 +36,18 @@ function WhatsAppSectionTabs({
       href: `/companies/${companyId}/whatsapp/conversations`,
       icon: MessagesSquare,
     },
+    {
+      key: "templates" as const,
+      label: "Templates",
+      href: `/companies/${companyId}/whatsapp/templates`,
+      icon: LayoutTemplate,
+    },
   ]
 
   return (
     <nav
       aria-label="WhatsApp sections"
-      className="animate-fade-in flex w-fit items-center gap-1 border-b"
+      className="flex w-fit animate-fade-in items-center gap-1 border-b"
     >
       {tabs.map((tab) => {
         const isActive = active === tab.key
@@ -46,8 +57,7 @@ function WhatsAppSectionTabs({
             href={tab.href}
             className={cn(
               "relative flex items-center gap-1.5 px-2.5 py-2 text-xs text-muted-foreground transition-colors after:absolute after:inset-x-0 after:-bottom-px after:h-px after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-200 hover:text-foreground",
-              isActive &&
-                "font-medium text-foreground after:scale-x-100",
+              isActive && "font-medium text-foreground after:scale-x-100"
             )}
             aria-current={isActive ? "page" : undefined}
           >

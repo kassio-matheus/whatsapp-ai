@@ -157,6 +157,36 @@ export type WhatsAppCloudApiConnectResponse = {
   verification: WhatsAppCloudApiConnection
 }
 
+export type WhatsAppCloudApiTemplate = {
+  id: string
+  name: string
+  language: string
+  status: string
+  category: string | null
+  components: Record<string, unknown>[]
+  quality_score: Record<string, unknown> | null
+  rejected_reason: string | null
+}
+
+export type WhatsAppCloudApiTemplatePage = {
+  data: WhatsAppCloudApiTemplate[]
+  next_cursor: string | null
+}
+
+export type WhatsAppAiResult = {
+  prompt_message: WhatsAppMessage
+  message: WhatsAppMessage
+  response: string
+}
+
+export type WhatsAppMediaUpload = {
+  key: string
+  url: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+}
+
 export type WhatsAppRealtimeEvent = {
   type: string
   company_id: string
@@ -183,10 +213,15 @@ export class ApiClientError extends Error {
 async function request<T>(
   path: string,
   init: RequestInit = {},
-  token?: string,
+  token?: string
 ): Promise<T> {
   const headers = new Headers(init.headers)
-  if (init.body && !headers.has("Content-Type")) {
+  if (
+    init.body &&
+    !headers.has("Content-Type") &&
+    typeof init.body !== "string" &&
+    !(init.body instanceof FormData)
+  ) {
     headers.set("Content-Type", "application/json")
   }
   if (token) {
@@ -250,7 +285,7 @@ export function subscribeToWhatsAppEvents({
           },
           cache: "no-store",
           signal: controller.signal,
-        },
+        }
       )
       if (!response.ok || !response.body) {
         throw new Error("Could not connect to WhatsApp live updates.")
@@ -287,7 +322,7 @@ export function subscribeToWhatsAppEvents({
         onError?.(
           error instanceof Error
             ? error
-            : new Error("WhatsApp live updates were interrupted."),
+            : new Error("WhatsApp live updates were interrupted.")
         )
       }
     } finally {
@@ -325,14 +360,14 @@ export const api = {
   verifyEmail(token: string) {
     return request<TokenResponse>(
       `/auth/verify-email${buildQuery({ token })}`,
-      { method: "POST" },
+      { method: "POST" }
     )
   },
 
   resendVerificationEmail(email: string) {
     return request<{ message: string }>(
       `/auth/resend-verification-email${buildQuery({ email })}`,
-      { method: "POST" },
+      { method: "POST" }
     )
   },
 
@@ -345,7 +380,7 @@ export const api = {
     return request<Company>(
       "/companies",
       { method: "POST", body: JSON.stringify({ name }) },
-      token,
+      token
     )
   },
 
@@ -361,16 +396,12 @@ export const api = {
     return request<Company>(
       `/companies/${companyId}`,
       { method: "PUT", body: JSON.stringify({ name }) },
-      token,
+      token
     )
   },
 
   deleteCompany(companyId: string, token: string) {
-    return request<void>(
-      `/companies/${companyId}`,
-      { method: "DELETE" },
-      token,
-    )
+    return request<void>(`/companies/${companyId}`, { method: "DELETE" }, token)
   },
 
   listMembers(companyId: string, token: string) {
@@ -380,12 +411,12 @@ export const api = {
   createMember(
     companyId: string,
     data: { email: string; password: string },
-    token: string,
+    token: string
   ) {
     return request<Member>(
       `/companies/${companyId}/members`,
       { method: "POST", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -393,12 +424,12 @@ export const api = {
     companyId: string,
     memberId: string,
     data: { email?: string; password?: string; is_active?: boolean },
-    token: string,
+    token: string
   ) {
     return request<Member>(
       `/companies/${companyId}/members/${memberId}`,
       { method: "PUT", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -406,19 +437,19 @@ export const api = {
     return request<void>(
       `/companies/${companyId}/members/${memberId}`,
       { method: "DELETE" },
-      token,
+      token
     )
   },
 
   // --- AI ---
   createChatSession(
     data: { title?: string; system_prompt?: string | null },
-    token: string,
+    token: string
   ) {
     return request<ChatSession>(
       "/ai/sessions",
       { method: "POST", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -426,7 +457,7 @@ export const api = {
     return request<ChatSession[]>(
       `/ai/sessions${buildQuery({ limit, offset })}`,
       {},
-      token,
+      token
     )
   },
 
@@ -438,7 +469,7 @@ export const api = {
     return request<ContextSummary>(
       `/ai/sessions/${sessionId}/context`,
       {},
-      token,
+      token
     )
   },
 
@@ -446,19 +477,19 @@ export const api = {
     return request<{ session_id: string; system_prompt: string | null }>(
       `/ai/sessions/${sessionId}/system-prompt`,
       {},
-      token,
+      token
     )
   },
 
   updateSystemPrompt(
     sessionId: string,
     system_prompt: string | null,
-    token: string,
+    token: string
   ) {
     return request<{ session_id: string; system_prompt: string | null }>(
       `/ai/sessions/${sessionId}/system-prompt`,
       { method: "PUT", body: JSON.stringify({ system_prompt }) },
-      token,
+      token
     )
   },
 
@@ -466,7 +497,7 @@ export const api = {
     return request<{ session_id: string; system_prompt: string | null }>(
       `/ai/sessions/${sessionId}/system-prompt`,
       { method: "DELETE" },
-      token,
+      token
     )
   },
 
@@ -474,7 +505,7 @@ export const api = {
     return request<{ message: string }>(
       `/ai/sessions/${sessionId}`,
       { method: "DELETE" },
-      token,
+      token
     )
   },
 
@@ -482,7 +513,7 @@ export const api = {
     return request<ChatResult>(
       `/ai/sessions/${sessionId}/chat`,
       { method: "POST", body: JSON.stringify({ prompt }) },
-      token,
+      token
     )
   },
 
@@ -494,12 +525,12 @@ export const api = {
       credentials: WhatsAppCloudApiCredentials
       subscribe_to_webhooks?: boolean
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppCloudApiConnectResponse>(
       "/whatsapp/instances/cloud-api",
       { method: "POST", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -510,24 +541,24 @@ export const api = {
       credentials: WhatsAppCloudApiCredentials
       subscribe_to_webhooks?: boolean
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppCloudApiConnectResponse>(
       `/whatsapp/instances/${instanceId}/cloud-api`,
       { method: "PUT", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
   verifyCloudApiInstance(
     instanceId: string,
     token: string,
-    subscribe_to_webhooks = true,
+    subscribe_to_webhooks = true
   ) {
     return request<WhatsAppCloudApiConnectResponse>(
       `/whatsapp/instances/${instanceId}/verify${buildQuery({ subscribe_to_webhooks: subscribe_to_webhooks ? "true" : "false" })}`,
       { method: "POST" },
-      token,
+      token
     )
   },
 
@@ -542,12 +573,12 @@ export const api = {
       credentials?: Record<string, unknown>
       config?: Record<string, unknown>
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppInstance>(
       "/whatsapp/instances",
       { method: "POST", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -555,7 +586,7 @@ export const api = {
     return request<WhatsAppInstance[]>(
       `/whatsapp/instances${buildQuery({ company_id })}`,
       {},
-      token,
+      token
     )
   },
 
@@ -571,12 +602,12 @@ export const api = {
       config?: Record<string, unknown>
       is_active?: boolean
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppInstance>(
       `/whatsapp/instances/${instanceId}`,
       { method: "PUT", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -584,7 +615,7 @@ export const api = {
     return request<void>(
       `/whatsapp/instances/${instanceId}`,
       { method: "DELETE" },
-      token,
+      token
     )
   },
 
@@ -598,23 +629,23 @@ export const api = {
       is_blocked?: boolean
       metadata?: Record<string, unknown>
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppContact>(
       "/whatsapp/contacts",
       { method: "POST", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
   listContacts(
     token: string,
-    opts: { instance_id?: string; company_id?: string; limit?: number } = {},
+    opts: { instance_id?: string; company_id?: string; limit?: number } = {}
   ) {
     return request<WhatsAppContact[]>(
       `/whatsapp/contacts${buildQuery(opts)}`,
       {},
-      token,
+      token
     )
   },
 
@@ -629,12 +660,12 @@ export const api = {
       metadata?: Record<string, unknown>
       is_active?: boolean
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppContact>(
       `/whatsapp/contacts/${contactId}`,
       { method: "PUT", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -642,7 +673,7 @@ export const api = {
     return request<void>(
       `/whatsapp/contacts/${contactId}`,
       { method: "DELETE" },
-      token,
+      token
     )
   },
 
@@ -655,12 +686,12 @@ export const api = {
       status?: ConversationStatus
       metadata?: Record<string, unknown>
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppConversation>(
       "/whatsapp/conversations",
       { method: "POST", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -671,12 +702,12 @@ export const api = {
       company_id?: string
       contact_id?: string
       limit?: number
-    } = {},
+    } = {}
   ) {
     return request<WhatsAppConversation[]>(
       `/whatsapp/conversations${buildQuery(opts)}`,
       {},
-      token,
+      token
     )
   },
 
@@ -690,12 +721,12 @@ export const api = {
       metadata?: Record<string, unknown>
       is_active?: boolean
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppConversation>(
       `/whatsapp/conversations/${conversationId}`,
       { method: "PUT", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -703,7 +734,7 @@ export const api = {
     return request<void>(
       `/whatsapp/conversations/${conversationId}`,
       { method: "DELETE" },
-      token,
+      token
     )
   },
 
@@ -711,7 +742,7 @@ export const api = {
     return request<WhatsAppMessage[]>(
       `/whatsapp/conversations/${conversationId}/messages`,
       {},
-      token,
+      token
     )
   },
 
@@ -727,12 +758,28 @@ export const api = {
       metadata?: Record<string, unknown>
       sent_at?: string
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppMessage>(
       "/whatsapp/messages",
       { method: "POST", body: JSON.stringify(data) },
-      token,
+      token
+    )
+  },
+
+  createNote(conversationId: string, content: string, token: string) {
+    return request<WhatsAppMessage>(
+      `/whatsapp/conversations/${conversationId}/note`,
+      { method: "POST", body: JSON.stringify({ content }) },
+      token
+    )
+  },
+
+  askAi(conversationId: string, prompt: string, token: string) {
+    return request<WhatsAppAiResult>(
+      `/whatsapp/conversations/${conversationId}/ai`,
+      { method: "POST", body: JSON.stringify({ prompt }) },
+      token
     )
   },
 
@@ -743,12 +790,12 @@ export const api = {
       instance_id?: string
       company_id?: string
       limit?: number
-    } = {},
+    } = {}
   ) {
     return request<WhatsAppMessage[]>(
       `/whatsapp/messages${buildQuery(opts)}`,
       {},
-      token,
+      token
     )
   },
 
@@ -760,12 +807,12 @@ export const api = {
       direction?: MessageDirection
       message_type?: string
     },
-    token: string,
+    token: string
   ) {
     return request<WhatsAppMessage>(
       `/whatsapp/messages/${messageId}`,
       { method: "PUT", body: JSON.stringify(data) },
-      token,
+      token
     )
   },
 
@@ -773,7 +820,60 @@ export const api = {
     return request<void>(
       `/whatsapp/messages/${messageId}`,
       { method: "DELETE" },
-      token,
+      token
+    )
+  },
+
+  listCloudApiTemplates(
+    instanceId: string,
+    token: string,
+    opts: { limit?: number; after?: string } = {}
+  ) {
+    return request<WhatsAppCloudApiTemplatePage>(
+      `/whatsapp/instances/${instanceId}/cloud-api/templates${buildQuery(opts)}`,
+      {},
+      token
+    )
+  },
+
+  createCloudApiTemplate(
+    instanceId: string,
+    data: {
+      name: string
+      language: string
+      category: string
+      components: Record<string, unknown>[]
+      allow_category_change?: boolean
+    },
+    token: string
+  ) {
+    return request<WhatsAppCloudApiTemplate>(
+      `/whatsapp/instances/${instanceId}/cloud-api/templates`,
+      { method: "POST", body: JSON.stringify(data) },
+      token
+    )
+  },
+
+  deleteCloudApiTemplate(
+    instanceId: string,
+    name: string,
+    token: string,
+    opts: { hsm_id?: string } = {}
+  ) {
+    return request<void>(
+      `/whatsapp/instances/${instanceId}/cloud-api/templates${buildQuery({ name, hsm_id: opts.hsm_id })}`,
+      { method: "DELETE" },
+      token
+    )
+  },
+
+  uploadWhatsAppMedia(file: File, token: string) {
+    const form = new FormData()
+    form.append("file", file)
+    return request<WhatsAppMediaUpload>(
+      "/whatsapp/media/upload",
+      { method: "POST", body: form },
+      token
     )
   },
 

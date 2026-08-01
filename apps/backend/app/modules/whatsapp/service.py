@@ -21,7 +21,6 @@ from .cloud_api import (
     MetaCloudApiError,
     verify_webhook_signature,
 )
-from .events import whatsapp_event_broker
 from .models import (
     IntegrationType,
     MessageDirection,
@@ -209,7 +208,7 @@ def create_integration(
         raise HTTPException(
             status_code=422,
             detail=(
-                "Use POST /whatsapp/instances/cloud-api so the Meta "
+                "Use POST /whatsapp/cloud-api/integrations so the Meta "
                 "credentials and phone number are verified"
             ),
         )
@@ -231,11 +230,6 @@ def create_integration(
     session.add(integration)
     _commit(session)
     session.refresh(integration)
-    whatsapp_event_broker.publish(
-        company_id=integration.company_id,
-        event_type="instance.created",
-        instance_id=integration.id,
-    )
     return integration
 
 
@@ -326,11 +320,6 @@ def create_cloud_api_integration(
     session.add(integration)
     _commit(session)
     session.refresh(integration)
-    whatsapp_event_broker.publish(
-        company_id=integration.company_id,
-        event_type="instance.connected",
-        instance_id=integration.id,
-    )
     return integration, connection, webhook_subscribed
 
 
@@ -370,11 +359,6 @@ def update_cloud_api_integration(
     session.add(integration)
     _commit(session)
     session.refresh(integration)
-    whatsapp_event_broker.publish(
-        company_id=integration.company_id,
-        event_type="instance.updated",
-        instance_id=integration.id,
-    )
     return integration, connection, webhook_subscribed
 
 
@@ -411,11 +395,6 @@ def verify_cloud_api_integration(
     session.add(integration)
     _commit(session)
     session.refresh(integration)
-    whatsapp_event_broker.publish(
-        company_id=integration.company_id,
-        event_type="instance.verified",
-        instance_id=integration.id,
-    )
     return integration, connection, webhook_subscribed
 
 
@@ -456,7 +435,7 @@ def update_integration(
         raise HTTPException(
             status_code=422,
             detail=(
-                "Use PUT /whatsapp/instances/{id}/cloud-api to change "
+                "Use PUT /whatsapp/cloud-api/integrations/{id} to change "
                 "Meta Cloud API credentials or provider configuration"
             ),
         )
@@ -464,7 +443,7 @@ def update_integration(
         raise HTTPException(
             status_code=422,
             detail=(
-                "Use POST /whatsapp/instances/cloud-api to create a "
+                "Use POST /whatsapp/cloud-api/integrations to create a "
                 "verified Meta Cloud API connection"
             ),
         )
@@ -483,11 +462,6 @@ def update_integration(
     session.add(integration)
     _commit(session)
     session.refresh(integration)
-    whatsapp_event_broker.publish(
-        company_id=integration.company_id,
-        event_type="instance.updated",
-        instance_id=integration.id,
-    )
     return integration
 
 
@@ -503,11 +477,6 @@ def delete_integration(
     integration.updated_at = _now()
     session.add(integration)
     _commit(session)
-    whatsapp_event_broker.publish(
-        company_id=integration.company_id,
-        event_type="instance.deleted",
-        instance_id=integration.id,
-    )
 
 
 def list_contacts(
@@ -569,7 +538,7 @@ def create_contact(
 ) -> WhatsAppContact:
     integration = _get_integration(
         session=session,
-        integration_id=data.instance_id,
+        integration_id=data.integration_id,
         current_user=current_user,
     )
     contact = WhatsAppContact(
@@ -585,11 +554,6 @@ def create_contact(
     session.add(contact)
     _commit(session)
     session.refresh(contact)
-    whatsapp_event_broker.publish(
-        company_id=contact.company_id,
-        event_type="contact.created",
-        instance_id=contact.integration_id,
-    )
     return contact
 
 
@@ -630,11 +594,6 @@ def update_contact(
     session.add(contact)
     _commit(session)
     session.refresh(contact)
-    whatsapp_event_broker.publish(
-        company_id=contact.company_id,
-        event_type="contact.updated",
-        instance_id=contact.integration_id,
-    )
     return contact
 
 
@@ -650,11 +609,6 @@ def delete_contact(
     contact.updated_at = _now()
     session.add(contact)
     _commit(session)
-    whatsapp_event_broker.publish(
-        company_id=contact.company_id,
-        event_type="contact.deleted",
-        instance_id=contact.integration_id,
-    )
 
 
 def list_conversations(
@@ -715,7 +669,7 @@ def create_conversation(
 ) -> WhatsAppConversation:
     integration = _get_integration(
         session=session,
-        integration_id=data.instance_id,
+        integration_id=data.integration_id,
         current_user=current_user,
     )
     if data.contact_id is not None:
@@ -741,12 +695,6 @@ def create_conversation(
     session.add(conversation)
     _commit(session)
     session.refresh(conversation)
-    whatsapp_event_broker.publish(
-        company_id=conversation.company_id,
-        event_type="conversation.created",
-        instance_id=conversation.integration_id,
-        conversation_id=conversation.id,
-    )
     return conversation
 
 
@@ -795,12 +743,6 @@ def update_conversation(
     session.add(conversation)
     _commit(session)
     session.refresh(conversation)
-    whatsapp_event_broker.publish(
-        company_id=conversation.company_id,
-        event_type="conversation.updated",
-        instance_id=conversation.integration_id,
-        conversation_id=conversation.id,
-    )
     return conversation
 
 
@@ -816,12 +758,6 @@ def delete_conversation(
     conversation.updated_at = _now()
     session.add(conversation)
     _commit(session)
-    whatsapp_event_broker.publish(
-        company_id=conversation.company_id,
-        event_type="conversation.deleted",
-        instance_id=conversation.integration_id,
-        conversation_id=conversation.id,
-    )
 
 
 def list_messages(
@@ -970,13 +906,6 @@ def create_message(
     session.add(conversation)
     _commit(session)
     session.refresh(message)
-    whatsapp_event_broker.publish(
-        company_id=message.company_id,
-        event_type="message.created",
-        instance_id=message.integration_id,
-        conversation_id=message.conversation_id,
-        message_id=message.id,
-    )
     return message
 
 
@@ -1016,13 +945,6 @@ def update_message(
     session.add(message)
     _commit(session)
     session.refresh(message)
-    whatsapp_event_broker.publish(
-        company_id=message.company_id,
-        event_type="message.updated",
-        instance_id=message.integration_id,
-        conversation_id=message.conversation_id,
-        message_id=message.id,
-    )
     return message
 
 
@@ -1038,13 +960,6 @@ def delete_message(
     message.updated_at = _now()
     session.add(message)
     _commit(session)
-    whatsapp_event_broker.publish(
-        company_id=message.company_id,
-        event_type="message.deleted",
-        instance_id=message.integration_id,
-        conversation_id=message.conversation_id,
-        message_id=message.id,
-    )
 
 
 def verify_meta_webhook(
@@ -1408,10 +1323,4 @@ def process_meta_webhook(
                     )
     if processed:
         _commit(session)
-        for integration in valid_integrations:
-            whatsapp_event_broker.publish(
-                company_id=integration.company_id,
-                event_type="inbox.changed",
-                instance_id=integration.id,
-            )
     return {"received": True, "processed": processed}
