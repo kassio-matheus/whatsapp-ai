@@ -7,6 +7,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 
+# usa o Python já instalado na imagem, evitando download do CPython gerenciado pelo uv
+ENV UV_PYTHON_PREFERENCE=only-system
+
 # copia só os arquivos de dependências primeiro (cache de layer)
 COPY apps/backend/pyproject.toml apps/backend/uv.lock ./
 
