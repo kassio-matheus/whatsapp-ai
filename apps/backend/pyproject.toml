@@ -15,7 +15,6 @@ dependencies = [
     "fastmcp>=3.4.5",
     "openai>=2.11.0",
     "opencode-ai>=0.1.0a36",
-    "psycopg2>=2.9.12",
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
