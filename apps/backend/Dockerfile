@@ -10,8 +10,7 @@ WORKDIR /app
 # copia só os arquivos de dependências primeiro (cache de layer)
 COPY apps/backend/pyproject.toml apps/backend/uv.lock ./
 
-RUN --mount=type=cache,target=/root/.cache/uv \
-	uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev
 
 # copia o resto do código do backend
 COPY apps/backend/ .
