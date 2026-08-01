@@ -38,6 +38,7 @@ import { SessionDialog } from "@/components/ai/session-dialog"
 import { SystemPromptDialog } from "@/components/ai/system-prompt-dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
+import { Markdown } from "@/components/ui/markdown"
 import { PageHeader } from "@/components/ui/page-header"
 import {
   api,
@@ -257,10 +258,14 @@ export default function AIPage() {
           <Card className="flex min-h-0 flex-col p-0">
             <ScrollArea className="flex-1">
               <ul className="flex flex-col">
-                {sessions.map((session) => {
+                {sessions.map((session, index) => {
                   const isActive = session.id === selectedId
                   return (
-                    <li key={session.id}>
+                    <li
+                      key={session.id}
+                      className="stagger-enter"
+                      style={{ animationDelay: `${index * 30}ms` }}
+                    >
                       <div
                         className={cn(
                           "flex items-center gap-1 border-b px-2 py-2 transition-colors hover:bg-accent",
@@ -532,9 +537,9 @@ function TypingIndicator() {
         <Bot />
       </span>
       <div className="flex items-center gap-1 rounded-none border border-border bg-background px-3 py-3">
-        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.3s]" />
-        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:-0.15s]" />
-        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground" />
+        <span className="animate-typing size-1.5 rounded-full bg-muted-foreground" />
+        <span className="animate-typing size-1.5 rounded-full bg-muted-foreground [animation-delay:0.15s]" />
+        <span className="animate-typing size-1.5 rounded-full bg-muted-foreground [animation-delay:0.3s]" />
       </div>
     </div>
   )
@@ -551,13 +556,13 @@ function ChatBubble({ message }: { message: ChatMessage }) {
       )}
     >
       {!isUser ? (
-        <span className="mt-1 flex size-6 shrink-0 items-center justify-center rounded-full border bg-muted/40 [&_svg]:size-3">
+        <span className="animate-pop mt-1 flex size-6 shrink-0 items-center justify-center rounded-full border bg-muted/40 [&_svg]:size-3">
           {isSystem ? <Sparkles /> : <Bot />}
         </span>
       ) : null}
       <div
         className={cn(
-          "max-w-[75%] rounded-none border px-3 py-2 text-xs",
+          "animate-pop max-w-[75%] rounded-none border px-3 py-2 text-xs",
           isUser
             ? "border-primary/20 bg-primary/10"
             : isSystem
@@ -565,7 +570,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
               : "border-border bg-background",
         )}
       >
-        <p className="whitespace-pre-wrap break-words">{message.content}</p>
+        <Markdown content={message.content} />
         <span className="mt-1 block text-[10px] text-muted-foreground">
           {formatDateTime(message.created_at)}
         </span>

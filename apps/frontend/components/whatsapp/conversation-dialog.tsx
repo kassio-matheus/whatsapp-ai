@@ -45,7 +45,7 @@ function ConversationDialog({
   integrations: WhatsAppIntegration[]
   contacts: WhatsAppContact[]
   onSave: (data: {
-    integration_id: string
+    instance_id: string
     contact_id?: string
     title?: string
     status?: ConversationStatus
@@ -62,7 +62,7 @@ function ConversationDialog({
     if (!integrationId) {
       return contacts
     }
-    return contacts.filter((contact) => contact.integration_id === integrationId)
+    return contacts.filter((contact) => contact.instance_id === integrationId)
   }, [contacts, integrationId])
 
   React.useEffect(() => {
@@ -70,7 +70,7 @@ function ConversationDialog({
       return
     }
     setIntegrationId(
-      conversation?.integration_id ?? integrations[0]?.id ?? "",
+      conversation?.instance_id ?? integrations[0]?.id ?? "",
     )
     setContactId(conversation?.contact_id ?? "")
     setTitle(conversation?.title ?? "")
@@ -81,14 +81,14 @@ function ConversationDialog({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     if (!integrationId) {
-      setError("Select an integration.")
+      setError("Select an instance.")
       return
     }
     setIsPending(true)
     setError(null)
     try {
       await onSave({
-        integration_id: integrationId,
+        instance_id: integrationId,
         contact_id: contactId || undefined,
         title: title.trim() || undefined,
         status,
@@ -116,7 +116,7 @@ function ConversationDialog({
           </DialogHeader>
           <div className="flex flex-col gap-4 py-3">
             <div className="flex flex-col gap-2">
-              <Label>Integration</Label>
+              <Label>Instance</Label>
               <Select
                 items={integrations.map((integration) => ({
                   value: integration.id,

@@ -48,6 +48,104 @@
     --radius-3xl: calc(var(--radius) * 2.2);
     --radius-4xl: calc(var(--radius) * 2.6);
     --font-sans: var(--font-sans);
+
+    --animate-shimmer: shimmer 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    --animate-float: float 3.5s ease-in-out infinite;
+    --animate-typing: typing 1.2s ease-in-out infinite;
+    --animate-fade-up: fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+    --animate-fade-in: fade-in 0.3s ease-out both;
+    --animate-pop: pop 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+    --animate-spin-slow: spin 2.5s linear infinite;
+    --animate-pulse-soft: pulse-soft 2.4s ease-in-out infinite;
+    --animate-slide-down: slide-down 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+    --animate-slide-up: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+
+    @keyframes shimmer {
+        0% {
+            background-position: -200% 0;
+        }
+        100% {
+            background-position: 200% 0;
+        }
+    }
+    @keyframes float {
+        0%,
+        100% {
+            transform: translateY(0);
+        }
+        50% {
+            transform: translateY(-5px);
+        }
+    }
+    @keyframes typing {
+        0%,
+        60%,
+        100% {
+            transform: translateY(0);
+            opacity: 0.45;
+        }
+        30% {
+            transform: translateY(-4px);
+            opacity: 1;
+        }
+    }
+    @keyframes fade-up {
+        from {
+            opacity: 0;
+            transform: translateY(12px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    @keyframes fade-in {
+        from {
+            opacity: 0;
+        }
+        to {
+            opacity: 1;
+        }
+    }
+    @keyframes pop {
+        0% {
+            opacity: 0;
+            transform: scale(0.92);
+        }
+        100% {
+            opacity: 1;
+            transform: scale(1);
+        }
+    }
+    @keyframes pulse-soft {
+        0%,
+        100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.55;
+        }
+    }
+    @keyframes slide-down {
+        from {
+            opacity: 0;
+            transform: translateY(-6px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    @keyframes slide-up {
+        from {
+            opacity: 0;
+            transform: translateY(6px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
 }
 
 :root {
@@ -128,5 +226,26 @@
     }
   button:not(:disabled), [role="button"]:not(:disabled) {
     cursor: pointer;
+    }
+}
+
+@utility shimmer {
+    background-size: 200% 100%;
+    animation: shimmer 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@utility stagger-enter {
+    opacity: 0;
+    animation: fade-up 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
     }
 }

@@ -38,7 +38,7 @@ function ContactDialog({
   contact?: WhatsAppContact | null
   integrations: WhatsAppIntegration[]
   onSave: (data: {
-    integration_id: string
+    instance_id: string
     external_id?: string
     phone_number: string
     name?: string
@@ -58,7 +58,7 @@ function ContactDialog({
       return
     }
     setIntegrationId(
-      contact?.integration_id ?? integrations[0]?.id ?? "",
+      contact?.instance_id ?? integrations[0]?.id ?? "",
     )
     setPhone(contact?.phone_number ?? "")
     setName(contact?.name ?? "")
@@ -71,7 +71,7 @@ function ContactDialog({
     event.preventDefault()
     const trimmedPhone = phone.trim()
     if (!integrationId) {
-      setError("Select an integration.")
+      setError("Select an instance.")
       return
     }
     if (!trimmedPhone) {
@@ -82,7 +82,7 @@ function ContactDialog({
     setError(null)
     try {
       await onSave({
-        integration_id: integrationId,
+        instance_id: integrationId,
         phone_number: trimmedPhone,
         name: name.trim() || undefined,
         external_id: externalId.trim() || undefined,
@@ -111,7 +111,7 @@ function ContactDialog({
           </DialogHeader>
           <div className="flex flex-col gap-4 py-3">
             <div className="flex flex-col gap-2">
-              <Label>Integration</Label>
+              <Label>Instance</Label>
               <Select
                 items={integrations.map((integration) => ({
                   value: integration.id,
@@ -133,7 +133,7 @@ function ContactDialog({
               </Select>
               {integrations.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  Create an integration first.
+                  Create an instance first.
                 </p>
               ) : null}
             </div>

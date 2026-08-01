@@ -6,5 +6,5 @@ export default async function WhatsAppIndexPage({
   params: Promise<{ companyId: string }>
 }) {
   const { companyId } = await params
-  redirect(`/companies/${companyId}/whatsapp/integrations`)
+  redirect(`/companies/${companyId}/whatsapp/instances`)
 }

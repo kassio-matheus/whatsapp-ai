@@ -82,14 +82,14 @@ function CloudApiConnectionDialog({
     ) as WhatsAppCloudApiCredentials
 
     if (!trimmedName) {
-      setError("Give this connection a name.")
+      setError("Give this instance a name.")
       return
     }
     const missingField = Object.entries(normalizedCredentials).find(
       ([, value]) => !value,
     )
     if (missingField) {
-      setError("Fill in all Meta credentials to verify the connection.")
+      setError("Fill in all Meta credentials to verify the instance.")
       return
     }
 
@@ -103,7 +103,7 @@ function CloudApiConnectionDialog({
       })
       onOpenChange(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save connection.")
+      setError(err instanceof Error ? err.message : "Could not save instance.")
     } finally {
       setIsPending(false)
     }
@@ -116,18 +116,18 @@ function CloudApiConnectionDialog({
           <DialogHeader>
             <DialogTitle>
               {mode === "create"
-                ? "Add Meta Cloud API connection"
-                : `Replace credentials for ${integration?.name ?? "connection"}`}
+                ? "Add Meta Cloud API instance"
+                : `Replace credentials for ${integration?.name ?? "instance"}`}
             </DialogTitle>
             <DialogDescription>
-              Meta validates the WABA and phone number before this connection is
+              Meta validates the WABA and phone number before this instance is
               saved. Secrets are never shown again by the API.
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex flex-col gap-4 py-4">
             <div className="flex flex-col gap-2">
-              <Label htmlFor="cloud-connection-name">Connection name</Label>
+              <Label htmlFor="cloud-connection-name">Instance name</Label>
               <Input
                 id="cloud-connection-name"
                 value={name}
@@ -221,7 +221,7 @@ function CloudApiConnectionDialog({
             </Button>
             <Button type="submit" disabled={isPending}>
               {isPending ? <LoaderCircle className="animate-spin" /> : null}
-              {mode === "create" ? "Verify and connect" : "Verify and update"}
+              {mode === "create" ? "Verify and create" : "Verify and update"}
             </Button>
           </DialogFooter>
         </form>

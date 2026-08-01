@@ -13,7 +13,6 @@ import {
   MessagesSquare,
   Plus,
   ShieldCheck,
-  SlidersHorizontal,
   Smartphone,
   Sparkles,
   UserRound,
@@ -73,16 +72,10 @@ type NavItem = {
 
 const WHATSAPP_SUB_NAV: NavItem[] = [
   {
-    title: "Integrations",
+    title: "Instances",
     icon: Smartphone,
     buildHref: (companyId: string | null | undefined) =>
-      `/companies/${companyId ?? ""}/whatsapp/integrations`,
-  },
-  {
-    title: "Configuration",
-    icon: SlidersHorizontal,
-    buildHref: (companyId: string | null | undefined) =>
-      `/companies/${companyId ?? ""}/whatsapp/configuration`,
+      `/companies/${companyId ?? ""}/whatsapp/instances`,
   },
   {
     title: "Contacts",
@@ -336,13 +329,12 @@ function WhatsAppMenuItem({
   pathname: string
 }) {
   const [isOpen, setIsOpen] = React.useState(item.isActive)
-  const [prevActive, setPrevActive] = React.useState(item.isActive)
-  if (prevActive !== item.isActive) {
-    setPrevActive(item.isActive)
+
+  React.useEffect(() => {
     if (item.isActive) {
       setIsOpen(true)
     }
-  }
+  }, [item.isActive])
 
   const childIsActive = (href: string) => pathname.startsWith(href)
 
@@ -358,17 +350,21 @@ function WhatsAppMenuItem({
         <span>{item.title}</span>
         <ChevronRight
           className={cn(
-            "ms-auto transition-transform group-data-[collapsible=icon]:hidden",
+            "ms-auto transition-transform duration-200 group-data-[collapsible=icon]:hidden",
             isOpen && "rotate-90"
           )}
         />
       </SidebarMenuButton>
-      {isOpen ? (
+      {isOpen && companyId ? (
         <SidebarMenuSub>
-          {item.children?.map((child) => {
+          {item.children?.map((child, index) => {
             const href = child.buildHref(companyId)
             return (
-              <SidebarMenuSubItem key={child.title}>
+              <SidebarMenuSubItem
+                key={child.title}
+                className="stagger-enter"
+                style={{ animationDelay: `${index * 40}ms` }}
+              >
                 <SidebarMenuSubButton
                   isActive={childIsActive(href)}
                   render={<Link href={href} />}
@@ -388,6 +384,7 @@ function WhatsAppMenuItem({
 function AppShell({ children }: { children: React.ReactNode }) {
   const { isLoading, user, companies, currentCompanyId } = useApp()
   const router = useRouter()
+  const pathname = usePathname()
 
   React.useEffect(() => {
     if (!isLoading && !user) {
@@ -473,7 +470,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
             {user.is_super_admin ? "Super admin" : "Member"}
           </Badge>
         </header>
-        {children}
+        <div key={pathname} className="animate-fade-up min-h-0 flex-1">
+          {children}
+        </div>
       </SidebarInset>
     </SidebarProvider>
   )

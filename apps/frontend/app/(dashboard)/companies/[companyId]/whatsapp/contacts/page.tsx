@@ -41,6 +41,7 @@ import {
   type WhatsAppContact,
   type WhatsAppIntegration,
 } from "@/lib/api"
+import { formatDate } from "@/lib/format"
 
 export default function ContactsPage() {
   const params = useParams<{ companyId: string }>()
@@ -93,7 +94,7 @@ export default function ContactsPage() {
       return
     }
     void api
-      .listIntegrations(token, companyId)
+      .listInstances(token, companyId)
       .then(setIntegrations)
       .catch(() => undefined)
   }, [token, companyId])
@@ -174,8 +175,12 @@ export default function ContactsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {contacts.map((contact) => (
-                <TableRow key={contact.id}>
+              {contacts.map((contact, index) => (
+                <TableRow
+                  key={contact.id}
+                  className="stagger-enter"
+                  style={{ animationDelay: `${index * 40}ms` }}
+                >
                   <TableCell>
                     <span className="flex items-center gap-2 font-medium">
                       <span className="flex size-6 items-center justify-center rounded-full bg-muted text-[10px]">
@@ -198,7 +203,7 @@ export default function ContactsPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {new Date(contact.created_at).toLocaleDateString()}
+                    {formatDate(contact.created_at)}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>

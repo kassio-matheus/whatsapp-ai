@@ -63,7 +63,7 @@ export type ConversationStatus = "open" | "pending" | "closed"
 export type MessageDirection = "inbound" | "outbound"
 export type MessageStatus = "pending" | "sent" | "delivered" | "read" | "failed"
 
-export type WhatsAppIntegration = {
+export type WhatsAppInstance = {
   id: string
   company_id: string
   name: string
@@ -78,10 +78,14 @@ export type WhatsAppIntegration = {
   updated_at: string
 }
 
+// Kept only as a source-compatible alias while feature components move to the
+// product term used in the UI and public API.
+export type WhatsAppIntegration = WhatsAppInstance
+
 export type WhatsAppContact = {
   id: string
   company_id: string
-  integration_id: string
+  instance_id: string
   external_id: string | null
   phone_number: string
   name: string | null
@@ -96,7 +100,7 @@ export type WhatsAppContact = {
 export type WhatsAppConversation = {
   id: string
   company_id: string
-  integration_id: string
+  instance_id: string
   contact_id: string | null
   external_id: string | null
   title: string | null
@@ -111,7 +115,7 @@ export type WhatsAppConversation = {
 export type WhatsAppMessage = {
   id: string
   company_id: string
-  integration_id: string
+  instance_id: string
   conversation_id: string
   external_id: string | null
   direction: MessageDirection
@@ -149,8 +153,17 @@ export type WhatsAppCloudApiConnection = {
 }
 
 export type WhatsAppCloudApiConnectResponse = {
-  integration: WhatsAppIntegration
-  connection: WhatsAppCloudApiConnection
+  instance: WhatsAppInstance
+  verification: WhatsAppCloudApiConnection
+}
+
+export type WhatsAppRealtimeEvent = {
+  type: string
+  company_id: string
+  instance_id: string | null
+  conversation_id: string | null
+  message_id: string | null
+  occurred_at: string
 }
 
 export type ApiError = {
@@ -210,6 +223,87 @@ function buildQuery(params: Record<string, string | number | undefined>) {
   }
   const query = search.toString()
   return query ? `?${query}` : ""
+}
+
+export function subscribeToWhatsAppEvents({
+  companyId,
+  token,
+  onEvent,
+  onError,
+}: {
+  companyId: string
+  token: string
+  onEvent: (event: WhatsAppRealtimeEvent) => void
+  onError?: (error: Error) => void
+}) {
+  const controller = new AbortController()
+  let retryTimer: ReturnType<typeof setTimeout> | undefined
+
+  async function connect() {
+    try {
+      const response = await fetch(
+        `${API_BASE}/whatsapp/instances/events${buildQuery({ company_id: companyId })}`,
+        {
+          headers: {
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${token}`,
+          },
+          cache: "no-store",
+          signal: controller.signal,
+        },
+      )
+      if (!response.ok || !response.body) {
+        throw new Error("Could not connect to WhatsApp live updates.")
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      while (!controller.signal.aborted) {
+        const { value, done } = await reader.read()
+        if (done) {
+          break
+        }
+        buffer += decoder.decode(value, { stream: true })
+        const frames = buffer.split("\n\n")
+        buffer = frames.pop() ?? ""
+        for (const frame of frames) {
+          const data = frame
+            .split("\n")
+            .find((line) => line.startsWith("data: "))
+            ?.slice(6)
+          if (!data) {
+            continue
+          }
+          try {
+            onEvent(JSON.parse(data) as WhatsAppRealtimeEvent)
+          } catch {
+            // Ignore malformed event frames and keep the subscription alive.
+          }
+        }
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        onError?.(
+          error instanceof Error
+            ? error
+            : new Error("WhatsApp live updates were interrupted."),
+        )
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        retryTimer = setTimeout(() => void connect(), 1500)
+      }
+    }
+  }
+
+  void connect()
+  return () => {
+    controller.abort()
+    if (retryTimer) {
+      clearTimeout(retryTimer)
+    }
+  }
 }
 
 export const api = {
@@ -393,7 +487,7 @@ export const api = {
   },
 
   // --- WhatsApp ---
-  createCloudApiIntegration(
+  createCloudApiInstance(
     data: {
       company_id: string
       name: string
@@ -403,14 +497,14 @@ export const api = {
     token: string,
   ) {
     return request<WhatsAppCloudApiConnectResponse>(
-      "/whatsapp/cloud-api/integrations",
+      "/whatsapp/instances/cloud-api",
       { method: "POST", body: JSON.stringify(data) },
       token,
     )
   },
 
-  updateCloudApiIntegration(
-    integrationId: string,
+  updateCloudApiInstance(
+    instanceId: string,
     data: {
       name?: string
       credentials: WhatsAppCloudApiCredentials
@@ -419,25 +513,25 @@ export const api = {
     token: string,
   ) {
     return request<WhatsAppCloudApiConnectResponse>(
-      `/whatsapp/cloud-api/integrations/${integrationId}`,
+      `/whatsapp/instances/${instanceId}/cloud-api`,
       { method: "PUT", body: JSON.stringify(data) },
       token,
     )
   },
 
-  verifyCloudApiIntegration(
-    integrationId: string,
+  verifyCloudApiInstance(
+    instanceId: string,
     token: string,
     subscribe_to_webhooks = true,
   ) {
     return request<WhatsAppCloudApiConnectResponse>(
-      `/whatsapp/cloud-api/integrations/${integrationId}${buildQuery({ subscribe_to_webhooks: subscribe_to_webhooks ? "true" : "false" })}`,
+      `/whatsapp/instances/${instanceId}/verify${buildQuery({ subscribe_to_webhooks: subscribe_to_webhooks ? "true" : "false" })}`,
       { method: "POST" },
       token,
     )
   },
 
-  createIntegration(
+  createInstance(
     data: {
       company_id: string
       name: string
@@ -450,23 +544,23 @@ export const api = {
     },
     token: string,
   ) {
-    return request<WhatsAppIntegration>(
-      "/whatsapp/integrations",
+    return request<WhatsAppInstance>(
+      "/whatsapp/instances",
       { method: "POST", body: JSON.stringify(data) },
       token,
     )
   },
 
-  listIntegrations(token: string, company_id?: string) {
-    return request<WhatsAppIntegration[]>(
-      `/whatsapp/integrations${buildQuery({ company_id })}`,
+  listInstances(token: string, company_id?: string) {
+    return request<WhatsAppInstance[]>(
+      `/whatsapp/instances${buildQuery({ company_id })}`,
       {},
       token,
     )
   },
 
-  updateIntegration(
-    integrationId: string,
+  updateInstance(
+    instanceId: string,
     data: {
       name?: string
       integration_type?: IntegrationType
@@ -479,16 +573,16 @@ export const api = {
     },
     token: string,
   ) {
-    return request<WhatsAppIntegration>(
-      `/whatsapp/integrations/${integrationId}`,
+    return request<WhatsAppInstance>(
+      `/whatsapp/instances/${instanceId}`,
       { method: "PUT", body: JSON.stringify(data) },
       token,
     )
   },
 
-  deleteIntegration(integrationId: string, token: string) {
+  deleteInstance(instanceId: string, token: string) {
     return request<void>(
-      `/whatsapp/integrations/${integrationId}`,
+      `/whatsapp/instances/${instanceId}`,
       { method: "DELETE" },
       token,
     )
@@ -496,7 +590,7 @@ export const api = {
 
   createContact(
     data: {
-      integration_id: string
+      instance_id: string
       external_id?: string
       phone_number: string
       name?: string
@@ -515,7 +609,7 @@ export const api = {
 
   listContacts(
     token: string,
-    opts: { integration_id?: string; company_id?: string; limit?: number } = {},
+    opts: { instance_id?: string; company_id?: string; limit?: number } = {},
   ) {
     return request<WhatsAppContact[]>(
       `/whatsapp/contacts${buildQuery(opts)}`,
@@ -554,7 +648,7 @@ export const api = {
 
   createConversation(
     data: {
-      integration_id: string
+      instance_id: string
       contact_id?: string
       external_id?: string
       title?: string
@@ -573,7 +667,7 @@ export const api = {
   listConversations(
     token: string,
     opts: {
-      integration_id?: string
+      instance_id?: string
       company_id?: string
       contact_id?: string
       limit?: number
@@ -646,7 +740,7 @@ export const api = {
     token: string,
     opts: {
       conversation_id?: string
-      integration_id?: string
+      instance_id?: string
       company_id?: string
       limit?: number
     } = {},

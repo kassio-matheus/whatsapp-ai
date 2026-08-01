@@ -18,12 +18,12 @@ function EmptyState({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center gap-2 border border-dashed border-border px-6 py-12 text-center",
+        "animate-fade-up flex flex-col items-center justify-center gap-2 border border-dashed border-border px-6 py-12 text-center",
         className,
       )}
     >
       {icon ? (
-        <div className="flex size-10 items-center justify-center rounded-none border bg-muted/40 ring-1 ring-foreground/10">
+        <div className="animate-float flex size-10 items-center justify-center rounded-none border bg-muted/40 ring-1 ring-foreground/10">
           {icon}
         </div>
       ) : null}

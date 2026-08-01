@@ -42,6 +42,7 @@ import { PageContainer, PageHeader } from "@/components/ui/page-header"
 import {
   api,
   ApiClientError,
+  subscribeToWhatsAppEvents,
   type WhatsAppIntegration,
 } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
@@ -64,21 +65,42 @@ export default function WhatsAppConfigurationPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<WhatsAppIntegration | null>(null)
   const [deleting, setDeleting] = React.useState<WhatsAppIntegration | null>(null)
+  const webhookUrl = `${API_BASE}/whatsapp/webhooks/meta`
+
   const [verifyingId, setVerifyingId] = React.useState<string | null>(null)
+  const [copied, setCopied] = React.useState(false)
+
+  const copyTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  React.useEffect(() => {
+    return () => {
+      if (copyTimer.current) {
+        clearTimeout(copyTimer.current)
+      }
+    }
+  }, [])
+
+  async function handleCopy() {
+    await navigator.clipboard?.writeText(webhookUrl)
+    setCopied(true)
+    if (copyTimer.current) {
+      clearTimeout(copyTimer.current)
+    }
+    copyTimer.current = setTimeout(() => setCopied(false), 2000)
+  }
 
   const load = React.useCallback(async () => {
     if (!token) {
       return
     }
     try {
-      const result = await api.listIntegrations(token, companyId)
+      const result = await api.listInstances(token, companyId)
       setConnections(result.filter((item) => item.adapter === "whatsapp_cloud"))
       setError(null)
     } catch (err) {
       setError(
         err instanceof ApiClientError
           ? err.message
-          : "Could not load Meta connections.",
+          : "Could not load Meta instances.",
       )
     } finally {
       setIsLoading(false)
@@ -88,6 +110,21 @@ export default function WhatsAppConfigurationPage() {
   React.useEffect(() => {
     void load()
   }, [load])
+
+  React.useEffect(() => {
+    if (!token) {
+      return
+    }
+    return subscribeToWhatsAppEvents({
+      companyId,
+      token,
+      onEvent: (event) => {
+        if (event.type.startsWith("instance.")) {
+          void load()
+        }
+      },
+    })
+  }, [companyId, load, token])
 
   async function handleSave({
     name,
@@ -100,19 +137,19 @@ export default function WhatsAppConfigurationPage() {
       return
     }
     if (editing) {
-      const result = await api.updateCloudApiIntegration(
+      const result = await api.updateCloudApiInstance(
         editing.id,
         { name, credentials, subscribe_to_webhooks },
         token,
       )
       setConnections((previous) =>
         previous.map((item) =>
-          item.id === result.integration.id ? result.integration : item,
+          item.id === result.instance.id ? result.instance : item,
         ),
       )
       return
     }
-    const result = await api.createCloudApiIntegration(
+    const result = await api.createCloudApiInstance(
       {
         company_id: companyId,
         name,
@@ -121,7 +158,7 @@ export default function WhatsAppConfigurationPage() {
       },
       token,
     )
-    setConnections((previous) => [...previous, result.integration])
+    setConnections((previous) => [...previous, result.instance])
   }
 
   async function handleVerify(integration: WhatsAppIntegration) {
@@ -130,10 +167,10 @@ export default function WhatsAppConfigurationPage() {
     }
     setVerifyingId(integration.id)
     try {
-      const result = await api.verifyCloudApiIntegration(integration.id, token)
+      const result = await api.verifyCloudApiInstance(integration.id, token)
       setConnections((previous) =>
         previous.map((item) =>
-          item.id === result.integration.id ? result.integration : item,
+          item.id === result.instance.id ? result.instance : item,
         ),
       )
       setError(null)
@@ -141,7 +178,7 @@ export default function WhatsAppConfigurationPage() {
       setError(
         err instanceof ApiClientError
           ? err.message
-          : "Could not verify this Meta connection.",
+          : "Could not verify this Meta instance.",
       )
     } finally {
       setVerifyingId(null)
@@ -152,22 +189,20 @@ export default function WhatsAppConfigurationPage() {
     if (!token || !deleting) {
       return
     }
-    await api.deleteIntegration(deleting.id, token)
+    await api.deleteInstance(deleting.id, token)
     setConnections((previous) =>
       previous.filter((item) => item.id !== deleting.id),
     )
     setDeleting(null)
   }
 
-  const webhookUrl = `${API_BASE}/whatsapp/webhooks/meta`
-
   return (
     <PageContainer>
-      <WhatsAppSectionTabs companyId={companyId} active="configuration" />
+      <WhatsAppSectionTabs companyId={companyId} active="instances" />
 
       <PageHeader
-        title="WhatsApp configuration"
-        description="Connect multiple official Meta Cloud API phone numbers to this company. Each connection keeps its own WABA, token, phone number and webhook settings."
+        title="WhatsApp instances"
+        description="Each instance is a WhatsApp number connected through an adapter. Configure independent Cloud API instances with their own WABA, token, phone number and webhook."
       >
         <Button
           onClick={() => {
@@ -176,22 +211,25 @@ export default function WhatsAppConfigurationPage() {
           }}
         >
           <Plus />
-          Add connection
+          Add Cloud API instance
         </Button>
       </PageHeader>
 
       <div className="grid gap-3 md:grid-cols-3">
         <MetricCard
-          label="Active connections"
+          index={0}
+          label="Active instances"
           value={connections.filter((item) => item.is_active).length}
           icon={<ShieldCheck />}
         />
         <MetricCard
+          index={1}
           label="Webhook ready"
           value={connections.filter((item) => configBoolean(item, "webhook_subscribed")).length}
           icon={<CheckCircle2 />}
         />
         <MetricCard
+          index={2}
           label="Phone numbers"
           value={connections.filter((item) => item.phone_number).length}
           icon={<RefreshCw />}
@@ -206,7 +244,7 @@ export default function WhatsAppConfigurationPage() {
           </CardTitle>
           <CardDescription>
             Configure this URL in the Meta App Dashboard and use the same verify
-            token entered for each connection.
+            token entered for each instance.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -214,13 +252,13 @@ export default function WhatsAppConfigurationPage() {
             <code className="min-w-0 flex-1 overflow-x-auto bg-muted px-2 py-1.5 text-[11px]">
               {webhookUrl}
             </code>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void navigator.clipboard?.writeText(webhookUrl)}
-            >
-              <Clipboard />
-              Copy URL
+            <Button variant="outline" size="sm" onClick={() => void handleCopy()}>
+              {copied ? (
+                <CheckCircle2 className="animate-pop text-primary" />
+              ) : (
+                <Clipboard />
+              )}
+              {copied ? "Copied!" : "Copy URL"}
             </Button>
           </div>
         </CardContent>
@@ -247,8 +285,8 @@ export default function WhatsAppConfigurationPage() {
         <Card className="p-0">
           <EmptyState
             icon={<ShieldCheck />}
-            title="No Meta connections yet"
-            description="Add your first official WhatsApp Cloud API connection. You can add one connection for every WABA or phone number you operate."
+            title="No Meta instances yet"
+            description="Add the first official WhatsApp Cloud API instance. You can create one instance for every WABA or phone number you operate."
             action={
               <Button
                 onClick={() => {
@@ -257,16 +295,17 @@ export default function WhatsAppConfigurationPage() {
                 }}
               >
                 <Plus />
-                Add connection
+                Add Cloud API instance
               </Button>
             }
           />
         </Card>
       ) : (
         <div className="grid gap-3 xl:grid-cols-2">
-          {connections.map((connection) => (
+          {connections.map((connection, index) => (
             <ConnectionCard
               key={connection.id}
+              index={index}
               connection={connection}
               isVerifying={verifyingId === connection.id}
               onVerify={() => void handleVerify(connection)}
@@ -295,8 +334,8 @@ export default function WhatsAppConfigurationPage() {
             setDeleting(null)
           }
         }}
-        title="Remove Meta connection"
-        description={`Remove "${deleting?.name ?? "this connection"}"? Its stored conversations remain available, but new messages will stop using this connection.`}
+        title="Remove Meta instance"
+        description={`Remove "${deleting?.name ?? "this instance"}"? Its stored conversations remain available, but new messages will stop using this instance.`}
         confirmLabel="Remove"
         destructive
         onConfirm={handleDelete}
@@ -309,19 +348,29 @@ function MetricCard({
   label,
   value,
   icon,
+  index = 0,
 }: {
   label: string
   value: number
   icon: React.ReactNode
+  index?: number
 }) {
   return (
-    <Card size="sm">
+    <Card
+      size="sm"
+      className="stagger-enter transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm"
+      style={{ animationDelay: `${index * 60}ms` }}
+    >
       <CardContent className="flex items-center justify-between gap-3">
         <div className="flex flex-col gap-1">
           <span className="text-[11px] text-muted-foreground">{label}</span>
-          <span className="text-lg font-medium">{value}</span>
+          <span className="text-lg font-medium transition-colors duration-300">
+            {value}
+          </span>
         </div>
-        <span className="text-muted-foreground">{icon}</span>
+        <span className="text-muted-foreground transition-transform duration-300 group-hover:scale-110">
+          {icon}
+        </span>
       </CardContent>
     </Card>
   )
@@ -333,12 +382,14 @@ function ConnectionCard({
   onVerify,
   onEdit,
   onDelete,
+  index = 0,
 }: {
   connection: WhatsAppIntegration
   isVerifying: boolean
   onVerify: () => void
   onEdit: () => void
   onDelete: () => void
+  index?: number
 }) {
   const webhookSubscribed = configBoolean(connection, "webhook_subscribed")
   const verifiedName =
@@ -348,7 +399,10 @@ function ConnectionCard({
   const qualityRating = connection.config.quality_rating
 
   return (
-    <Card>
+    <Card
+      className="stagger-enter transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm"
+      style={{ animationDelay: `${index * 70}ms` }}
+    >
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-xs">
           <span className="flex size-7 items-center justify-center bg-primary/10 text-primary">
@@ -363,7 +417,7 @@ function ConnectionCard({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <Button variant="ghost" size="icon-sm" aria-label="Connection actions">
+                <Button variant="ghost" size="icon-sm" aria-label="Instance actions">
                   <MoreHorizontal />
                 </Button>
               }
@@ -375,7 +429,7 @@ function ConnectionCard({
               </DropdownMenuItem>
               <DropdownMenuItem variant="destructive" onClick={onDelete}>
                 <Trash2 />
-                Remove connection
+                Remove instance
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -403,7 +457,7 @@ function ConnectionCard({
           </Badge>
           <Button variant="outline" size="sm" disabled={isVerifying} onClick={onVerify}>
             {isVerifying ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-            Verify connection
+            Verify instance
           </Button>
         </div>
       </CardContent>

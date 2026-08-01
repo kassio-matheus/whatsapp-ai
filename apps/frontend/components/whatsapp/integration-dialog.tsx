@@ -295,7 +295,7 @@ function IntegrationActiveToggle({
   async function toggle() {
     setIsPending(true)
     try {
-      const updated = await api.updateIntegration(
+      const updated = await api.updateInstance(
         integration.id,
         { is_active: !integration.is_active },
         token,

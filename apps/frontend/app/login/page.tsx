@@ -95,7 +95,10 @@ export default function LoginPage() {
                 onChange={(event) => setEmail(event.target.value)}
               />
               {emailError ? (
-                <p className="text-xs text-destructive" role="alert">
+                <p
+                  className="animate-slide-down text-xs text-destructive"
+                  role="alert"
+                >
                   {emailError}
                 </p>
               ) : null}

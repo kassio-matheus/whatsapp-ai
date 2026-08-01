@@ -147,8 +147,12 @@ export default function CompaniesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {companies.map((company) => (
-                <TableRow key={company.id} className="group">
+              {companies.map((company, index) => (
+                <TableRow
+                  key={company.id}
+                  className="group stagger-enter"
+                  style={{ animationDelay: `${index * 40}ms` }}
+                >
                   <TableCell>
                     <Link
                       href={`/companies/${company.id}`}

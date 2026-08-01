@@ -39,6 +39,7 @@ import { MessageDialog } from "@/components/whatsapp/message-dialog"
 import {
   api,
   ApiClientError,
+  subscribeToWhatsAppEvents,
   type ConversationStatus,
   type WhatsAppContact,
   type WhatsAppConversation,
@@ -111,7 +112,7 @@ export default function ConversationsPage() {
         const [conversationsResult, integrationsResult, contactsResult] =
           await Promise.all([
             api.listConversations(token, { company_id: companyId, limit: 100 }),
-            api.listIntegrations(token, companyId),
+            api.listInstances(token, companyId),
             api.listContacts(token, { company_id: companyId, limit: 200 }),
           ])
         setConversations(conversationsResult)
@@ -170,14 +171,20 @@ export default function ConversationsPage() {
     if (!token) {
       return
     }
-    const interval = window.setInterval(() => {
-      void loadConversations()
-      if (selectedId) {
-        void loadMessages(selectedId)
-      }
-    }, 4000)
-    return () => window.clearInterval(interval)
-  }, [loadConversations, loadMessages, selectedId, token])
+    return subscribeToWhatsAppEvents({
+      companyId,
+      token,
+      onEvent: (event) => {
+        void loadConversations()
+        if (
+          selectedId &&
+          (!event.conversation_id || event.conversation_id === selectedId)
+        ) {
+          void loadMessages(selectedId)
+        }
+      },
+    })
+  }, [companyId, loadConversations, loadMessages, selectedId, token])
 
   async function handleSendMessage(data: ComposerMessageData) {
     if (!token || !selectedId) {
@@ -297,21 +304,25 @@ export default function ConversationsPage() {
           <Card className="p-0">
             <ScrollArea className="h-[520px]">
               <ul className="flex flex-col">
-                {conversations.map((conversation) => {
+                {conversations.map((conversation, index) => {
                   const contact = contacts.find(
                     (c) => c.id === conversation.contact_id,
                   )
                   const integration = integrations.find(
-                    (i) => i.id === conversation.integration_id,
+                    (i) => i.id === conversation.instance_id,
                   )
                   const isActive = conversation.id === selectedId
                   return (
-                    <li key={conversation.id}>
+                    <li
+                      key={conversation.id}
+                      className="stagger-enter"
+                      style={{ animationDelay: `${index * 30}ms` }}
+                    >
                       <button
                         type="button"
                         onClick={() => setSelectedId(conversation.id)}
                         className={cn(
-                          "flex w-full flex-col gap-1 border-b px-3 py-3 text-start outline-none transition-colors hover:bg-accent",
+                          "flex w-full flex-col gap-1 border-b px-3 py-3 text-start outline-none transition-colors duration-150 hover:bg-accent",
                           isActive && "bg-accent",
                         )}
                       >
@@ -325,7 +336,7 @@ export default function ConversationsPage() {
                           <StatusBadge status={conversation.status} />
                         </div>
                         <span className="truncate text-[10px] text-muted-foreground">
-                          {integration?.name ?? "Unknown integration"}
+                          {integration?.name ?? "Unknown instance"}
                           {contact?.phone_number ? ` · ${contact.phone_number}` : ""}
                         </span>
                         {conversation.last_message_at ? (
@@ -518,7 +529,7 @@ function MessageBubble({
     >
       <div
         className={cn(
-          "relative max-w-[80%] rounded-none border px-3 py-2 text-xs",
+          "animate-pop relative max-w-[80%] rounded-none border px-3 py-2 text-xs",
           isOutbound
             ? "border-primary/20 bg-primary/10"
             : "border-border bg-muted/40",

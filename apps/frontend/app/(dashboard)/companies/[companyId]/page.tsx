@@ -64,7 +64,7 @@ export default function CompanyDashboardPage() {
         const [membersResult, integrationsResult, conversationsResult] =
           await Promise.all([
             api.listMembers(companyId, currentToken),
-            api.listIntegrations(currentToken, companyId),
+            api.listInstances(currentToken, companyId),
             api.listConversations(currentToken, {
               company_id: companyId,
               limit: 100,
@@ -159,18 +159,21 @@ export default function CompanyDashboardPage() {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard
+          index={0}
           label="Members"
           value={members.length}
           icon={<Users />}
           hint="People in this company"
         />
         <StatCard
+          index={1}
           label="Integrations"
           value={integrations.length}
           icon={<MessageSquareText />}
           hint="Connected WhatsApp channels"
         />
         <StatCard
+          index={2}
           label="Open conversations"
           value={conversationCount}
           icon={<Phone />}
@@ -210,8 +213,12 @@ export default function CompanyDashboardPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {members.map((member) => (
-                <TableRow key={member.id}>
+              {members.map((member, index) => (
+                <TableRow
+                  key={member.id}
+                  className="stagger-enter"
+                  style={{ animationDelay: `${index * 40}ms` }}
+                >
                   <TableCell>
                     <span className="flex items-center gap-2 font-medium">
                       <Mail className="size-4 text-muted-foreground" />

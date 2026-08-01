@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { SlidersHorizontal, Smartphone } from "lucide-react"
+import { MessagesSquare, Smartphone, UserRound } from "lucide-react"
 
 import { cn } from "@workspace/ui/lib/utils"
 
@@ -10,42 +10,52 @@ function WhatsAppSectionTabs({
   active,
 }: {
   companyId: string
-  active: "integrations" | "configuration"
+  active: "instances" | "contacts" | "conversations"
 }) {
   const tabs = [
     {
-      key: "integrations" as const,
-      label: "Integration",
-      href: `/companies/${companyId}/whatsapp/integrations`,
+      key: "instances" as const,
+      label: "Instances",
+      href: `/companies/${companyId}/whatsapp/instances`,
       icon: Smartphone,
     },
     {
-      key: "configuration" as const,
-      label: "Configuration",
-      href: `/companies/${companyId}/whatsapp/configuration`,
-      icon: SlidersHorizontal,
+      key: "contacts" as const,
+      label: "Contacts",
+      href: `/companies/${companyId}/whatsapp/contacts`,
+      icon: UserRound,
+    },
+    {
+      key: "conversations" as const,
+      label: "Conversations",
+      href: `/companies/${companyId}/whatsapp/conversations`,
+      icon: MessagesSquare,
     },
   ]
 
   return (
     <nav
-      aria-label="WhatsApp setup"
-      className="flex w-fit items-center gap-1 border-b"
+      aria-label="WhatsApp sections"
+      className="animate-fade-in flex w-fit items-center gap-1 border-b"
     >
-      {tabs.map((tab) => (
-        <Link
-          key={tab.key}
-          href={tab.href}
-          className={cn(
-            "flex items-center gap-1.5 border-b-2 border-transparent px-2.5 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground",
-            active === tab.key && "border-foreground font-medium text-foreground",
-          )}
-          aria-current={active === tab.key ? "page" : undefined}
-        >
-          <tab.icon className="size-3.5" />
-          {tab.label}
-        </Link>
-      ))}
+      {tabs.map((tab) => {
+        const isActive = active === tab.key
+        return (
+          <Link
+            key={tab.key}
+            href={tab.href}
+            className={cn(
+              "relative flex items-center gap-1.5 px-2.5 py-2 text-xs text-muted-foreground transition-colors after:absolute after:inset-x-0 after:-bottom-px after:h-px after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-200 hover:text-foreground",
+              isActive &&
+                "font-medium text-foreground after:scale-x-100",
+            )}
+            aria-current={isActive ? "page" : undefined}
+          >
+            <tab.icon className="size-3.5" />
+            {tab.label}
+          </Link>
+        )
+      })}
     </nav>
   )
 }
