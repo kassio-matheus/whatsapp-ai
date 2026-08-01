@@ -6,15 +6,18 @@ import remarkGfm from "remark-gfm"
 import remarkMath from "remark-math"
 
 function normalizeMath(content: string): string {
-  return content.replace(
-    /^\s*\[[ \t]*([^\n]+?)[ \t]*\]\s*$/gm,
-    (_, inner) => {
-      if (!/[\\^_={}]/.test(inner)) {
-        return _
-      }
-      return `$$\n${inner}\n$$`
-    },
-  )
+  return content
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => `$$\n${inner.trim()}\n$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => `$${inner.trim()}$`)
+    .replace(
+      /^\s*\[[ \t]*([^\n]+?)[ \t]*\]\s*$/gm,
+      (match, inner) => {
+        if (!/[\\^_={}]/.test(inner)) {
+          return match
+        }
+        return `$$\n${inner}\n$$`
+      },
+    )
 }
 
 const Markdown = ({ content }: { content: string }) => {
