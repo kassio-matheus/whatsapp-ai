@@ -1,9 +1,11 @@
 [build]
 builder = "DOCKERFILE"
+dockerfilePath = "apps/backend/Dockerfile"
 
 [deploy]
 numReplicas = 1
-healthcheckPath = "/health"
+preDeployCommand = ["alembic upgrade head"]
+healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 60
 sleepApplication = false
 restartPolicyType = "ON_FAILURE"
