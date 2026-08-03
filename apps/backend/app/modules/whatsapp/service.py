@@ -1454,6 +1454,7 @@ def create_ai_message(
     )
 
     # Imported lazily to keep the WhatsApp module decoupled from the AI stack.
+    from app.modules.ai.llm.common import friendly_provider_error
     from app.modules.ai.service import llm
 
     system_prompt = (
@@ -1473,7 +1474,7 @@ def create_ai_message(
     except Exception as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"AI assistant failed: {exc}",
+            detail=friendly_provider_error(exc),
         ) from exc
 
     response_text = result.response.strip()

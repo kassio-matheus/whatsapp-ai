@@ -9,7 +9,7 @@ from rich.syntax import Syntax
 
 from app.core.logging import console
 
-from ..mcp import mcp_session
+from ..mcp import mcp_session, get_tools
 from ..models import AIPlatform, ChatResponseStructure
 
 TOOL_GUIDANCE = (
@@ -35,10 +35,17 @@ MAX_REMOTE_CALLS = 10
 
 
 class OpenAI(AIPlatform):
-    def __init__(self, api_key: str):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-5.6-luna",
+        reasoning: str = "medium",
+        supports_thinking: bool = True,
+    ):
         self.api_key = api_key
-        self.model = "gpt-5.6-luna"
-        self.reasoning_effort = "medium"
+        self.model = model
+        self.reasoning_effort = reasoning
+        self.supports_thinking = supports_thinking
 
     def generate(
         self,
@@ -107,6 +114,31 @@ class OpenAI(AIPlatform):
         schema["additionalProperties"] = False
         return schema
 
+    def _request_kwargs(
+        self,
+        *,
+        input_items: list[dict[str, Any]],
+        instruction: str | None,
+        tool_definitions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "input": cast(Any, input_items),
+            "instructions": instruction,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "chat_response",
+                    "schema": self._response_schema(),
+                    "strict": True,
+                }
+            },
+            "tools": cast(Any, tool_definitions),
+        }
+        if self.supports_thinking:
+            kwargs["reasoning"] = {"effort": self.reasoning_effort}
+        return kwargs
+
     async def _generate_async(
         self,
         input_items: list[dict[str, Any]],
@@ -118,31 +150,25 @@ class OpenAI(AIPlatform):
             AsyncOpenAI(api_key=self.api_key) as client,
             mcp_session(auth_token=auth_token) as session,
         ):
-            mcp_tools = (await session.list_tools()).tools
+            mcp_tools = await get_tools(session)
             if allowed_tools is not None:
                 allowed_names = set(allowed_tools)
-                mcp_tools = [tool for tool in mcp_tools if tool.name in allowed_names]
+                mcp_tools = [
+                    tool for tool in mcp_tools if tool.name in allowed_names]
                 allowed_tool_names = allowed_names
             else:
                 allowed_tool_names = {tool.name for tool in mcp_tools}
-            tool_definitions = [self._to_openai_tool(tool) for tool in mcp_tools]
+            tool_definitions = [self._to_openai_tool(
+                tool) for tool in mcp_tools]
 
             failed_calls: dict[tuple[str, str], dict[str, object]] = {}
 
             response = await cast(Any, client.responses.create)(
-                model=self.model,
-                input=cast(Any, input_items),
-                instructions=instruction,
-                reasoning={"effort": self.reasoning_effort},
-                text={
-                    "format": {
-                        "type": "json_schema",
-                        "name": "chat_response",
-                        "schema": self._response_schema(),
-                        "strict": True,
-                    }
-                },
-                tools=cast(Any, tool_definitions),
+                **self._request_kwargs(
+                    input_items=input_items,
+                    instruction=instruction,
+                    tool_definitions=tool_definitions,
+                )
             )
 
             for _ in range(MAX_REMOTE_CALLS):
@@ -174,11 +200,13 @@ class OpenAI(AIPlatform):
                         try:
                             args = json.loads(function_call.arguments or "{}")
                             if not isinstance(args, dict):
-                                raise TypeError("Tool arguments must be a JSON object")
+                                raise TypeError(
+                                    "Tool arguments must be a JSON object")
                             if args:
                                 console.print(
                                     Syntax(
-                                        json.dumps(args, indent=2, ensure_ascii=False),
+                                        json.dumps(args, indent=2,
+                                                   ensure_ascii=False),
                                         "json",
                                         word_wrap=True,
                                         theme="monokai",
@@ -197,9 +225,11 @@ class OpenAI(AIPlatform):
                                     f"[bold green]<<< TOOL RESULT: {serialized}[/]"
                                 )
                         except Exception as exc:  # noqa: BLE001 - tool failures feed back to the model
-                            serialized = {"error": f"{type(exc).__name__}: {exc}"}
+                            serialized = {
+                                "error": f"{type(exc).__name__}: {exc}"}
                             is_error = True
-                            console.print(f"[bold red]<<< TOOL ERROR: {serialized}[/]")
+                            console.print(
+                                f"[bold red]<<< TOOL ERROR: {serialized}[/]")
 
                         if is_error:
                             failed_calls[(name, args_key)] = serialized
@@ -214,23 +244,25 @@ class OpenAI(AIPlatform):
 
                 input_items = [
                     *input_items,
-                    *[self._response_item_to_input(item) for item in response.output],
+                    *[self._response_item_to_input(item)
+                      for item in response.output],
                     *function_outputs,
                 ]
                 response = await cast(Any, client.responses.create)(
-                    model=self.model,
-                    input=cast(Any, input_items),
-                    instructions=instruction,
-                    reasoning={"effort": self.reasoning_effort},
-                    text={
-                        "format": {
-                            "type": "json_schema",
-                            "name": "chat_response",
-                            "schema": self._response_schema(),
-                            "strict": True,
-                        }
-                    },
-                    tools=cast(Any, tool_definitions),
+                    **self._request_kwargs(
+                        input_items=input_items,
+                        instruction=instruction,
+                        tool_definitions=tool_definitions,
+                    )
+                )
+
+            if not (response.output_text or "").strip():
+                response = await cast(Any, client.responses.create)(
+                    **self._request_kwargs(
+                        input_items=input_items,
+                        instruction=instruction,
+                        tool_definitions=[],
+                    )
                 )
 
         return self._parse_response(response)

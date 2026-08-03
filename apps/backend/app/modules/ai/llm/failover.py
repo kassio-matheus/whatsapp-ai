@@ -10,10 +10,30 @@ from __future__ import annotations
 import logging
 
 from app.core.logging import console
+from app.modules.ai.llm.common import friendly_provider_error
 
 from ..models import AIPlatform, ChatResponseStructure
 
 _logger = logging.getLogger(__name__)
+
+
+class EmptyResponseError(RuntimeError):
+    """Raised when a provider completes but returns no usable text."""
+
+
+class AllProvidersFailed(RuntimeError):
+    """Raised when every provider in the chain failed to answer.
+
+    The message lists a human-friendly reason for each provider.
+    """
+
+    def __init__(self, failures: list[tuple[str, str]]):
+        self.failures = failures
+        if failures:
+            message = "; ".join(f"{name}: {reason}" for name, reason in failures)
+        else:
+            message = "No LLM provider is configured"
+        super().__init__(message)
 
 
 class FailoverLLM(AIPlatform):
@@ -33,19 +53,26 @@ class FailoverLLM(AIPlatform):
         if not self.providers:
             raise RuntimeError("No LLM provider is configured")
 
-        last_error: Exception | None = None
+        failures: list[tuple[str, str]] = []
         for provider in self.providers:
             try:
                 console.print(f"[bold cyan]>>> LLM: {type(provider).__name__}[/]")
-                return provider.generate(
+                result = provider.generate(
                     prompt=prompt,
                     context=context,
                     system_prompt=system_prompt,
                     auth_token=auth_token,
                     allowed_tools=allowed_tools,
                 )
+                if not (result.response or "").strip():
+                    raise EmptyResponseError(
+                        f"{type(provider).__name__} returned an empty reply"
+                    )
+                return result
             except Exception as exc:  # noqa: BLE001 - failover is the point
-                last_error = exc
+                failures.append(
+                    (type(provider).__name__, friendly_provider_error(exc))
+                )
                 _logger.warning(
                     "LLM provider %s failed, trying next one: %s",
                     type(provider).__name__,
@@ -56,6 +83,4 @@ class FailoverLLM(AIPlatform):
                     f"{type(exc).__name__}: {exc}[/]"
                 )
 
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("All LLM providers failed")
+        raise AllProvidersFailed(failures)

@@ -12,11 +12,10 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.db import engine
 from app.core.r2 import R2Error, r2
-from app.modules.ai.llm.deepseek_llm import DeepSeek
-from app.modules.ai.llm.failover import FailoverLLM
-from app.modules.ai.llm.gemini_llm import Gemini
-from app.modules.ai.llm.openai_llm import OpenAI
+from app.modules.ai.llm.common import friendly_provider_error
+from app.modules.ai.llm_settings import build_global_llm, build_llm_for_user
 from app.modules.ai.models import ChatFile, ChatSession, Message
+from app.modules.auth.models import User
 
 SUMMARY_THRESHOLD = 30
 MAX_ACTIVE_SESSIONS = 100
@@ -27,19 +26,7 @@ _ALLOWED_UPLOADS = {
     "text/plain": {".txt"},
 }
 
-def _llm_providers() -> list[object]:
-    """Build the provider chain in failover order (DeepSeek, ChatGPT, Gemini)."""
-    providers = []
-    if settings.DEEPSEEK_API_KEY:
-        providers.append(DeepSeek(api_key=settings.DEEPSEEK_API_KEY))
-    if settings.OPENAI_API_KEY:
-        providers.append(OpenAI(api_key=settings.OPENAI_API_KEY))
-    if settings.GEMINI_API_KEY:
-        providers.append(Gemini(api_key=settings.GEMINI_API_KEY))
-    return providers
-
-
-llm = FailoverLLM(providers=_llm_providers())
+llm = build_global_llm()
 
 
 def _expires_at() -> datetime.datetime:
@@ -256,17 +243,35 @@ def chat(
         for m in recent:
             context.append({"role": m.role, "content": m.content})
 
-        result = llm.generate(
-            prompt=prompt,
-            context=context,
-            system_prompt=chat_session.system_prompt,
-            auth_token=auth_token,
+        user = session.get(User, user_id)
+        company_llm = (
+            build_llm_for_user(session=session, user=user) if user else llm
         )
 
+        try:
+            result = company_llm.generate(
+                prompt=prompt,
+                context=context,
+                system_prompt=chat_session.system_prompt,
+                auth_token=auth_token,
+            )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=friendly_provider_error(exc),
+            ) from exc
+        response_text = (result.response or "").strip()
+        if not response_text:
+            raise HTTPException(
+                status_code=502,
+                detail="The AI assistant returned an empty reply",
+            )
         assistant_msg = Message(
             session_id=chat_session.id,
             role="assistant",
-            content=result.response,
+            content=response_text,
         )
         session.add(assistant_msg)
         session.flush()
@@ -275,7 +280,7 @@ def chat(
         session.add(chat_session)
         session.commit()
 
-        return result.response
+        return response_text
 
 
 def upload_file(

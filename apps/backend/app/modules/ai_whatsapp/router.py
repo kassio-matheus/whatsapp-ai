@@ -7,6 +7,7 @@ contacts and per-conversation overrides.
 """
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 
@@ -17,6 +18,7 @@ from app.modules.ai_whatsapp.models import (
     ConversationAISettingsUpdate,
     McpToolInfo,
     McpToolsPage,
+    WhatsAppAISettings,
     WhatsAppAISettingsResponse,
     WhatsAppAISettingsUpdate,
 )
@@ -29,7 +31,19 @@ from app.utils.deps import CurrentUser, SessionDep
 router = APIRouter()
 
 
-def _settings_response(settings) -> WhatsAppAISettingsResponse:
+def _settings_response(
+    settings: WhatsAppAISettings | None, company_id: uuid.UUID
+) -> WhatsAppAISettingsResponse:
+    if settings is None:
+        return WhatsAppAISettingsResponse(
+            company_id=company_id,
+            enabled=False,
+            system_prompt=None,
+            trusted_phone_numbers=[],
+            allowed_contact_tools=[],
+            reply_cooldown_seconds=20,
+            updated_at=datetime.now(UTC).replace(tzinfo=None),
+        )
     return WhatsAppAISettingsResponse(
         company_id=settings.company_id,
         enabled=settings.enabled,
@@ -71,7 +85,7 @@ def get_company_ai_settings(
     settings = service.get_company_settings(
         session=session, company_id=company_id
     )
-    return _settings_response(settings)
+    return _settings_response(settings, company_id)
 
 
 @router.put(
@@ -100,7 +114,7 @@ def update_company_ai_settings(
         company_id=company_id,
         data=body,
     )
-    return _settings_response(settings)
+    return _settings_response(settings, company_id)
 
 
 @router.get(

@@ -195,6 +195,42 @@ export type ConversationAISettings = {
   system_prompt: string | null
 }
 
+export type LLMProvider = "deepseek" | "openai"  | "gemini" | "groq"
+
+export type ReasoningLevel = "minimal" | "low" | "medium" | "high"
+
+export type LLMProviderConfig = {
+  configured: boolean
+  model: string | null
+}
+
+export type LLMSettings = {
+  selected_provider: LLMProvider | null
+  providers: Record<LLMProvider, LLMProviderConfig>
+  reasoning_effort: ReasoningLevel
+  supports_thinking: boolean
+}
+
+export type AIGlobalSettings = LLMSettings
+
+export type CompanyLLMSettings = LLMSettings & {
+  company_id: string
+}
+
+export type AIGlobalSettingsUpdate = {
+  selected_provider?: LLMProvider | null
+  deepseek_api_key?: string | null
+  openai_api_key?: string | null
+  gemini_api_key?: string | null
+  groq_api_key?: string | null
+  deepseek_model?: string | null
+  openai_model?: string | null
+  gemini_model?: string | null
+  groq_model?: string | null
+  reasoning_effort?: ReasoningLevel | null
+  supports_thinking?: boolean | null
+}
+
 export type McpToolInfo = {
   name: string
   method: string
@@ -995,6 +1031,44 @@ export const api = {
     return request<McpToolsPage>(
       `/whatsapp/companies/${companyId}/ai/mcp-tools`,
       {},
+      token
+    )
+  },
+
+  getAIGlobalSettings(token: string) {
+    return request<AIGlobalSettings>(`/ai/settings`, {}, token)
+  },
+
+  updateAIGlobalSettings(data: AIGlobalSettingsUpdate, token: string) {
+    return request<AIGlobalSettings>(
+      `/ai/settings`,
+      { method: "PUT", body: JSON.stringify(data) },
+      token
+    )
+  },
+
+  getCompanyLLMSettings(companyId: string, token: string) {
+    return request<CompanyLLMSettings>(
+      `/ai/companies/${companyId}/llm-settings`,
+      {},
+      token
+    )
+  },
+
+  updateCompanyLLMSettings(
+    companyId: string,
+    data: {
+      selected_provider?: LLMProvider | null
+      deepseek_api_key?: string | null
+      openai_api_key?: string | null
+      gemini_api_key?: string | null
+      supports_thinking?: boolean | null
+    },
+    token: string
+  ) {
+    return request<CompanyLLMSettings>(
+      `/ai/companies/${companyId}/llm-settings`,
+      { method: "PUT", body: JSON.stringify(data) },
       token
     )
   },

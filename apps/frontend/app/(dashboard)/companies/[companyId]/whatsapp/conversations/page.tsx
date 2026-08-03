@@ -33,6 +33,7 @@ import { Switch } from "@workspace/ui/components/switch"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { useApp } from "@/components/app-provider"
+import { WhatsAppSectionTabs } from "@/components/whatsapp/whatsapp-section-tabs"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { PageHeader } from "@/components/ui/page-header"
@@ -471,6 +472,7 @@ export default function ConversationsPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      <WhatsAppSectionTabs companyId={companyId} active="conversations" />
       <PageHeader
         title="Conversations"
         description="Live inbox for inbound and outbound WhatsApp messages."

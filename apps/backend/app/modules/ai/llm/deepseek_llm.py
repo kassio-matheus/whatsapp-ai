@@ -9,12 +9,13 @@ import asyncio
 import json
 from typing import Any, cast
 
+from mcp.types import Tool as McpTool
 from openai import AsyncOpenAI
 from rich.syntax import Syntax
 
 from app.core.logging import console
 
-from ..mcp import mcp_session
+from ..mcp import mcp_session, get_tools
 from ..models import AIPlatform, ChatResponseStructure
 from .common import parse_chat_response
 from .openai_llm import (
@@ -28,11 +29,18 @@ from .openai_llm import (
 class DeepSeek(AIPlatform):
     """DeepSeek LLM provider (Chat Completions API)."""
 
-    def __init__(self, api_key: str):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "deepseek-v4-flash",
+        reasoning: str = "medium",
+        supports_thinking: bool = True,
+    ):
         self.api_key = api_key
         self.base_url = "https://api.deepseek.com"
-        self.model = "deepseek-v4-pro"
-        self.reasoning_effort = "high"
+        self.model = model
+        self.reasoning_effort = reasoning
+        self.supports_thinking = supports_thinking
 
     def generate(
         self,
@@ -70,6 +78,23 @@ class DeepSeek(AIPlatform):
                 allowed_tools=allowed_tools,
             )
         )
+
+    @staticmethod
+    def _to_chat_completion_tool(tool: McpTool) -> dict[str, Any]:
+        """Build a tool definition for the Chat Completions schema.
+
+        DeepSeek mirrors the OpenAI Chat Completions contract, which nests the
+        tool metadata inside a ``function`` object rather than flattening it
+        like the newer Responses API.
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.inputSchema,
+            },
+        }
 
     @staticmethod
     def _merge_messages(
@@ -117,23 +142,27 @@ class DeepSeek(AIPlatform):
             AsyncOpenAI(api_key=self.api_key, base_url=self.base_url) as client,
             mcp_session(auth_token=auth_token) as session,
         ):
-            mcp_tools = (await session.list_tools()).tools
+            mcp_tools = await get_tools(session)
             if allowed_tools is not None:
                 allowed_names = set(allowed_tools)
-                mcp_tools = [tool for tool in mcp_tools if tool.name in allowed_names]
+                mcp_tools = [
+                    tool for tool in mcp_tools if tool.name in allowed_names]
                 allowed_tool_names = allowed_names
             else:
                 allowed_tool_names = {tool.name for tool in mcp_tools}
-            tool_definitions = [OpenAI._to_openai_tool(tool) for tool in mcp_tools]
+            tool_definitions = [
+                self._to_chat_completion_tool(tool) for tool in mcp_tools
+            ]
 
             failed_calls: dict[tuple[str, str], dict[str, object]] = {}
 
             request: dict[str, Any] = {
                 "model": self.model,
                 "messages": messages,
-                "reasoning_effort": self.reasoning_effort,
-                "extra_body": {"thinking": {"type": "enabled"}},
             }
+            if self.supports_thinking:
+                request["reasoning_effort"] = self.reasoning_effort
+                request["extra_body"] = {"thinking": {"type": "enabled"}}
             if tool_definitions:
                 request["tools"] = tool_definitions
 
@@ -145,23 +174,25 @@ class DeepSeek(AIPlatform):
                 if not tool_calls:
                     break
 
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": choice.content,
-                        "tool_calls": [
-                            {
-                                "id": tool_call.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tool_call.function.name,
-                                    "arguments": tool_call.function.arguments,
-                                },
-                            }
-                            for tool_call in tool_calls
-                        ],
-                    }
-                )
+                assistant_message: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": choice.content,
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments,
+                            },
+                        }
+                        for tool_call in tool_calls
+                    ],
+                }
+                reasoning_content = getattr(choice, "reasoning_content", None)
+                if reasoning_content and self.supports_thinking:
+                    assistant_message["reasoning_content"] = reasoning_content
+                messages.append(assistant_message)
 
                 function_outputs: list[dict[str, str]] = []
                 for tool_call in tool_calls:
@@ -234,6 +265,13 @@ class DeepSeek(AIPlatform):
                 messages.extend(function_outputs)
                 response = await cast(Any, client.chat.completions.create)(
                     **{**request, "messages": messages}
+                )
+
+            if not (response.choices[0].message.content or "").strip():
+                no_tools_request = {**request, "messages": messages}
+                no_tools_request.pop("tools", None)
+                response = await cast(Any, client.chat.completions.create)(
+                    **no_tools_request
                 )
 
         return self._parse_response(response)

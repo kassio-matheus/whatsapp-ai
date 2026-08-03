@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""
     DEEPSEEK_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
+    GROQ_API_KEY: str = ""
     SECRET_KEY: str = Field(min_length=32)
     SQLALCHEMY_DATABASE_URI: str = Field(min_length=1)
 
@@ -28,7 +29,7 @@ class Settings(BaseSettings):
     SMTP_USER: str = ""
     SMTP_PASSWORD: str = ""
 
-    ACCESS_TOKEN_EXPIRES_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRES_MINUTES: int = 10080
     EMAIL_VERIFICATION_EXPIRES_MINUTES: int = 60
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
 

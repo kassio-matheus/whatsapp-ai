@@ -153,7 +153,7 @@ export default function WhatsAppAIPage() {
 
       <PageHeader
         title="AI Assistant"
-        description="Let the AI answer inbound WhatsApp messages automatically. Activation is global and can be overridden per conversation."
+        description="Let the AI answer inbound WhatsApp messages automatically. The model, provider and thinking power are configured globally in AI Settings."
       >
         <Badge variant={enabled ? "secondary" : "outline"}>
           <Bot className="size-3" />

@@ -174,10 +174,13 @@ def _generate_and_send(
 
     context = _recent_context(session=session, conversation_id=conversation.id)
 
-    from app.modules.ai.service import llm
+    from app.modules.ai.llm_settings import build_llm_for_company
 
     try:
-        result = llm.generate(
+        result = build_llm_for_company(
+            session=session,
+            company_id=company.id,
+        ).generate(
             prompt=message.content or "",
             context=context,
             system_prompt=system_prompt,

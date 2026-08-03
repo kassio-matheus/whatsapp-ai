@@ -4,6 +4,103 @@ from pydantic import ValidationError
 
 from ..models import ChatResponseStructure
 
+_STATUS_MESSAGES: dict[int, str] = {
+    400: "Invalid request sent to the AI provider",
+    401: "Invalid API key",
+    402: "Insufficient balance",
+    403: "Access denied by the AI provider",
+    404: "Model or resource not found",
+    408: "Timed out waiting for the AI provider",
+    429: "Rate limit exceeded, try again shortly",
+    500: "Internal error in the AI provider",
+    502: "AI provider unavailable",
+    503: "AI provider unavailable, try again",
+}
+
+
+def _unwrap_error(exc: BaseException) -> BaseException:
+    """Descend through exception groups to the first meaningful cause."""
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    return exc
+
+
+def _status_code(exc: BaseException) -> int | None:
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int):
+        return code
+    code = getattr(exc, "code", None)
+    if isinstance(code, int):
+        return code
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def _raw_message(exc: BaseException) -> str:
+    message = getattr(exc, "message", None)
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            error_message = error.get("message")
+            if isinstance(error_message, str) and error_message.strip():
+                return error_message.strip()
+        elif isinstance(error, str) and error.strip():
+            return error.strip()
+    return str(exc)
+
+
+def _provider_name(exc: BaseException) -> str:
+    module = type(exc).__module__
+    if "gemini" in module or "genai" in module:
+        return "Gemini"
+    if "openai" in module:
+        return "OpenAI"
+    if "deepseek" in module or "anthropic" in module:
+        return type(exc).__module__.rsplit(".", 1)[0].rsplit("_", 1)[0]
+    return "AI provider"
+
+
+def friendly_provider_error(exc: BaseException) -> str:
+    """Translate a provider exception into a human-friendly message.
+
+    Unwraps exception groups (raised by the MCP tool runner) and maps HTTP
+    status codes and message hints to short, actionable English messages,
+    for example 402 -> "Insufficient balance".
+    """
+    root = _unwrap_error(exc)
+
+    failures = getattr(root, "failures", None)
+    if isinstance(failures, list):
+        return str(root)
+
+    code = _status_code(root)
+
+    message = _raw_message(root).lower()
+    hints: list[tuple[tuple[str, ...], str]] = [
+        (("insufficient balance", "payment required", "billing"), "Insufficient balance"),
+        (("invalid api key", "incorrect api key", "authentication"), "Invalid API key"),
+        (("rate limit", "resource exhausted", "quota", "too many requests"), "Rate limit exceeded, try again shortly"),
+        (("timeout", "timed out", "deadline"), "Timed out waiting for the AI provider"),
+        (("not found", "unknown model"), "Model or resource not found"),
+        (("permission", "forbidden", "denied"), "Access denied by the AI provider"),
+    ]
+
+    for keywords, friendly in hints:
+        if any(keyword in message for keyword in keywords):
+            return friendly
+
+    if code in _STATUS_MESSAGES:
+        return _STATUS_MESSAGES[code]
+
+    raw = _raw_message(root)
+    if raw:
+        return f"{_provider_name(root)} failed: {raw[:200]}"
+    return f"{_provider_name(root)} failed"
+
 
 def parse_chat_response(text: str) -> ChatResponseStructure:
     """Parse the model output into the structured chat response.

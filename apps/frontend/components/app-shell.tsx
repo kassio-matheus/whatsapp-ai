@@ -96,6 +96,25 @@ const WHATSAPP_SUB_NAV: NavItem[] = [
     buildHref: (companyId: string | null | undefined) =>
       `/companies/${companyId ?? ""}/whatsapp/templates`,
   },
+  {
+    title: "AI Assistant",
+    icon: Bot,
+    buildHref: (companyId: string | null | undefined) =>
+      `/companies/${companyId ?? ""}/whatsapp/ai`,
+  },
+]
+
+const AI_SUB_NAV: NavItem[] = [
+  {
+    title: "AI Chat",
+    icon: Bot,
+    buildHref: () => "/ai",
+  },
+  {
+    title: "AI Settings",
+    icon: Sparkles,
+    buildHref: () => "/ai/settings",
+  },
 ]
 
 const BASE_NAV: NavItem[] = [
@@ -113,9 +132,10 @@ const BASE_NAV: NavItem[] = [
     children: WHATSAPP_SUB_NAV,
   },
   {
-    title: "AI Chat",
-    icon: Bot,
+    title: "AI",
+    icon: Sparkles,
     buildHref: () => "/ai",
+    children: AI_SUB_NAV,
   },
 ]
 
@@ -259,7 +279,7 @@ function NavLinks() {
   const nav = BASE_NAV.map((item) => {
     const href = item.buildHref(companyId)
     const isActive =
-      item.title === "AI Chat"
+      item.title === "AI"
         ? pathname.startsWith("/ai")
         : item.title === "WhatsApp"
           ? pathname.startsWith(`/companies/${companyId ?? ""}/whatsapp`)
@@ -276,9 +296,9 @@ function NavLinks() {
     <>
       <SidebarMenu>
         {nav.map((item) => {
-          if (item.title === "WhatsApp") {
+          if (item.children) {
             return (
-              <WhatsAppMenuItem
+              <ExpandableMenuItem
                 key={item.title}
                 item={item}
                 companyId={companyId}
@@ -326,7 +346,7 @@ function NavLinks() {
   )
 }
 
-function WhatsAppMenuItem({
+function ExpandableMenuItem({
   item,
   companyId,
   pathname,
@@ -349,7 +369,7 @@ function WhatsAppMenuItem({
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={item.isActive}
-        tooltip="WhatsApp"
+        tooltip={item.title}
         onClick={() => setIsOpen((open) => !open)}
         className="justify-between"
       >
@@ -362,7 +382,7 @@ function WhatsAppMenuItem({
           )}
         />
       </SidebarMenuButton>
-      {isOpen && companyId ? (
+      {isOpen ? (
         <SidebarMenuSub>
           {item.children?.map((child, index) => {
             const href = child.buildHref(companyId)

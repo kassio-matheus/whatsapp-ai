@@ -8,7 +8,7 @@ the tool responses, matching Gemini's multi-turn function-calling contract.
 
 import asyncio
 import json
-from typing import Any, cast
+from typing import Any, ClassVar
 
 from google import genai
 from google.genai import types
@@ -17,7 +17,7 @@ from rich.syntax import Syntax
 
 from app.core.logging import console
 
-from ..mcp import mcp_session
+from ..mcp import mcp_session, get_tools
 from ..models import AIPlatform, ChatResponseStructure
 from .common import parse_chat_response
 from .openai_llm import (
@@ -31,9 +31,17 @@ from .openai_llm import (
 class Gemini(AIPlatform):
     """Google Gemini LLM provider (native ``google-genai`` client)."""
 
-    def __init__(self, api_key: str):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-3.5-flash-lite",
+        thinking_level: str = "MINIMAL",
+        supports_thinking: bool = True,
+    ):
         self.api_key = api_key
-        self.model = "gemini-3.5-flash-lite"
+        self.model = model
+        self.thinking_level = thinking_level
+        self.supports_thinking = supports_thinking
 
     def generate(
         self,
@@ -72,12 +80,62 @@ class Gemini(AIPlatform):
             )
         )
 
-    @staticmethod
-    def _to_function_declaration(tool: McpTool) -> types.FunctionDeclaration:
+    #: JSON Schema keys accepted by ``google.genai.types.Schema``. The MCP tool
+    #: schemas derived from the backend OpenAPI carry extra keys (``examples``,
+    #: ``title``, ``const``…) that the Gemini client rejects, so they must be
+    #: stripped before building the function declarations.
+    _GEMINI_SCHEMA_FIELDS: ClassVar[set[str]] = {
+        "defs",
+        "ref",
+        "anyOf",
+        "default",
+        "description",
+        "enum",
+        "example",
+        "format",
+        "items",
+        "maxItems",
+        "maxLength",
+        "maxProperties",
+        "maximum",
+        "minItems",
+        "minLength",
+        "minProperties",
+        "minimum",
+        "nullable",
+        "pattern",
+        "properties",
+        "propertyOrdering",
+        "required",
+        "title",
+        "type",
+    }
+
+    @classmethod
+    def _sanitize_schema(cls, node: Any) -> Any:
+        if isinstance(node, dict):
+            cleaned: dict[str, Any] = {}
+            for key, value in node.items():
+                if key == "examples" and isinstance(value, list) and value:
+                    cleaned["example"] = cls._sanitize_schema(value[0])
+                elif key == "properties" and isinstance(value, dict):
+                    cleaned["properties"] = {
+                        name: cls._sanitize_schema(prop_schema)
+                        for name, prop_schema in value.items()
+                    }
+                elif key in cls._GEMINI_SCHEMA_FIELDS:
+                    cleaned[key] = cls._sanitize_schema(value)
+            return cleaned
+        if isinstance(node, list):
+            return [cls._sanitize_schema(item) for item in node]
+        return node
+
+    @classmethod
+    def _to_function_declaration(cls, tool: McpTool) -> types.FunctionDeclaration:
         return types.FunctionDeclaration(
             name=tool.name,
             description=tool.description or "",
-            parameters=cast(Any, tool.inputSchema),
+            parameters=cls._sanitize_schema(tool.inputSchema),
         )
 
     @staticmethod
@@ -104,10 +162,11 @@ class Gemini(AIPlatform):
         ]
 
         async with mcp_session(auth_token=auth_token) as session:
-            mcp_tools = (await session.list_tools()).tools
+            mcp_tools = await get_tools(session)
             if allowed_tools is not None:
                 allowed_names = set(allowed_tools)
-                mcp_tools = [tool for tool in mcp_tools if tool.name in allowed_names]
+                mcp_tools = [
+                    tool for tool in mcp_tools if tool.name in allowed_names]
                 allowed_tool_names = allowed_names
             else:
                 allowed_tool_names = {tool.name for tool in mcp_tools}
@@ -115,28 +174,37 @@ class Gemini(AIPlatform):
             function_declarations = [
                 self._to_function_declaration(tool) for tool in mcp_tools
             ]
-            config = types.GenerateContentConfig(
-                system_instruction=instruction or "",
-                tools=(
+            config_kwargs: dict[str, Any] = {
+                "system_instruction": instruction or "",
+                "tools": (
                     [types.Tool(function_declarations=function_declarations)]
                     if function_declarations
                     else None
                 ),
-                thinking_config=types.ThinkingConfig(
-                    thinking_level="MINIMAL",
-                ),
-                response_mime_type="application/json",
+                "response_mime_type": "application/json",
+            }
+            if self.supports_thinking:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(
+                    thinking_level=self.thinking_level,
+                )
+            config = types.GenerateContentConfig(**config_kwargs)
+
+            no_tools_config = types.GenerateContentConfig(
+                **{**config_kwargs, "tools": None}
             )
 
             failed_calls: dict[tuple[str, str], dict[str, object]] = {}
+            executed_calls: set[tuple[str, str]] = set()
+            looping = False
 
             async def generate_content(
                 current_contents: list[types.Content],
+                current_config: types.GenerateContentConfig = config,
             ) -> types.GenerateContentResponse:
                 return await client.aio.models.generate_content(
                     model=self.model,
                     contents=current_contents,
-                    config=config,
+                    config=current_config,
                 )
 
             response = await generate_content(contents)
@@ -144,6 +212,13 @@ class Gemini(AIPlatform):
             for _ in range(MAX_REMOTE_CALLS):
                 function_calls = response.function_calls or []
                 if not function_calls:
+                    break
+                if any(
+                    (fc.name, json.dumps(dict(fc.args or {}), sort_keys=True))
+                    in executed_calls
+                    for fc in function_calls
+                ):
+                    looping = True
                     break
 
                 contents.append(response.candidates[0].content)
@@ -203,6 +278,8 @@ class Gemini(AIPlatform):
 
                         if is_error:
                             failed_calls[(name, args_key)] = serialized
+                        else:
+                            executed_calls.add((name, args_key))
 
                     function_responses.append(
                         types.Part.from_function_response(
@@ -211,7 +288,14 @@ class Gemini(AIPlatform):
                         )
                     )
 
-                contents.append(types.Content(role="user", parts=function_responses))
+                contents.append(types.Content(
+                    role="user", parts=function_responses))
                 response = await generate_content(contents)
+
+            if looping or not (response.text or "").strip():
+                for _ in range(2):
+                    response = await generate_content(contents, no_tools_config)
+                    if (response.text or "").strip():
+                        break
 
         return self._parse_response(response)

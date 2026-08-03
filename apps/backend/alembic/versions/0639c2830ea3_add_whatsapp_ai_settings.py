@@ -12,6 +12,7 @@ import sqlalchemy as sa
 from sqlmodel.sql import sqltypes
 
 from alembic import op
+import sqlmodel
 
 # revision identifiers, used by Alembic.
 revision: str = '0639c2830ea3'

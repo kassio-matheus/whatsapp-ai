@@ -3,18 +3,23 @@ import uuid
 from fastapi import APIRouter, File, Query, Response, UploadFile
 from sqlmodel import Field, SQLModel
 
-from app.modules.ai import service
+from app.modules.ai import llm_settings, service
 from app.modules.ai.models import (
+    AIGlobalSettingsResponse,
+    AIGlobalSettingsUpdate,
     ChatRequest,
     ChatResponse,
     ChatSessionCreate,
     ChatSessionResponse,
+    CompanyLLMSettingsResponse,
+    CompanyLLMSettingsUpdate,
     ContextSummaryResponse,
     MessageResponse,
     SystemPromptResponse,
     SystemPromptUpdate,
 )
-from app.utils.deps import CurrentUser, TokenDep
+from app.modules.whatsapp.service import _ensure_company_access
+from app.utils.deps import AIProtected, CurrentUser, SessionDep, TokenDep
 
 router = APIRouter()
 
@@ -284,3 +289,101 @@ def download_file(
         media_type=mime_type or "application/octet-stream",
         headers=headers,
     )
+
+
+@router.get(
+    "/settings",
+    response_model=AIGlobalSettingsResponse,
+    summary="Get global AI settings",
+    description=(
+        "Return the global AI configuration: provider order, per-provider "
+        "models, thinking power and which API keys are stored. Keys are never "
+        "returned."
+    ),
+)
+def get_global_ai_settings(
+    current_user: CurrentUser,
+    session: SessionDep,
+    _: AIProtected,
+) -> AIGlobalSettingsResponse:
+    row = llm_settings.get_global_settings(session=session)
+    return llm_settings.global_settings_response(row=row)
+
+
+@router.put(
+    "/settings",
+    response_model=AIGlobalSettingsResponse,
+    summary="Update global AI settings",
+    description=(
+        "Configure the platform AI: select the provider order, set the model "
+        "per provider, choose the thinking power and store API keys. Keys are "
+        "upserted per provider; pass an empty string to remove a key. This is "
+        "the default used by the AI Chat and any channel without its own "
+        "override."
+    ),
+)
+def update_global_ai_settings(
+    body: AIGlobalSettingsUpdate,
+    current_user: CurrentUser,
+    session: SessionDep,
+    _: AIProtected,
+) -> AIGlobalSettingsResponse:
+    row = llm_settings.update_global_settings(session=session, data=body)
+    return llm_settings.global_settings_response(row=row)
+
+
+@router.get(
+    "/companies/{company_id}/llm-settings",
+    response_model=CompanyLLMSettingsResponse,
+    summary="Get company LLM settings",
+    description=(
+        "Return the LLM provider selected for the company plus the "
+        "configuration status of every provider. API keys are never returned."
+    ),
+)
+def get_company_llm_settings(
+    company_id: uuid.UUID,
+    current_user: CurrentUser,
+    session: SessionDep,
+    _: AIProtected,
+) -> CompanyLLMSettingsResponse:
+    _ensure_company_access(
+        session=session,
+        company_id=company_id,
+        current_user=current_user,
+    )
+    row = llm_settings.get_company_llm_settings(
+        session=session, company_id=company_id
+    )
+    return llm_settings.company_settings_response(company_id=company_id, row=row)
+
+
+@router.put(
+    "/companies/{company_id}/llm-settings",
+    response_model=CompanyLLMSettingsResponse,
+    summary="Update company LLM settings",
+    description=(
+        "Select the LLM provider used by the company's AI assistant and store "
+        "its API key in the database. Keys are upserted per provider; pass an "
+        "empty string to remove a key. The selected provider is tried first "
+        "in the failover chain, followed by the other configured providers."
+    ),
+)
+def update_company_llm_settings(
+    company_id: uuid.UUID,
+    body: CompanyLLMSettingsUpdate,
+    current_user: CurrentUser,
+    session: SessionDep,
+    _: AIProtected,
+) -> CompanyLLMSettingsResponse:
+    _ensure_company_access(
+        session=session,
+        company_id=company_id,
+        current_user=current_user,
+    )
+    row = llm_settings.update_company_llm_settings(
+        session=session,
+        company_id=company_id,
+        data=body,
+    )
+    return llm_settings.company_settings_response(company_id=company_id, row=row)

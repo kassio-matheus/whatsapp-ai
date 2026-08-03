@@ -59,7 +59,7 @@ function WhatsAppSectionTabs({
   return (
     <nav
       aria-label="WhatsApp sections"
-      className="flex w-fit animate-fade-in items-center gap-1 border-b"
+      className="flex w-full items-center gap-1 overflow-x-auto border-b scrollbar-none"
     >
       {tabs.map((tab) => {
         const isActive = active === tab.key
@@ -68,7 +68,7 @@ function WhatsAppSectionTabs({
             key={tab.key}
             href={tab.href}
             className={cn(
-              "relative flex items-center gap-1.5 px-2.5 py-2 text-xs text-muted-foreground transition-colors after:absolute after:inset-x-0 after:-bottom-px after:h-px after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-200 hover:text-foreground",
+              "relative flex shrink-0 items-center gap-1.5 px-2.5 py-2 text-xs whitespace-nowrap text-muted-foreground transition-colors after:absolute after:inset-x-0 after:-bottom-px after:h-px after:origin-left after:scale-x-0 after:bg-foreground after:transition-transform after:duration-200 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-[-2px]",
               isActive && "font-medium text-foreground after:scale-x-100"
             )}
             aria-current={isActive ? "page" : undefined}
