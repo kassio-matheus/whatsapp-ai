@@ -19,7 +19,11 @@ def get_user_by_email(*, session: Session, email: str) -> User | None:
 
 
 def register_user(*, session: Session, user: UserRegister) -> None:
-    """Register a regular user; privileged accounts are provisioned separately."""
+    """Register a user.
+
+    Users that sign up directly via ``/auth/register`` are not company members,
+    so they are provisioned as super admins automatically.
+    """
     if not user.email or not user.password:
         raise HTTPException(
             status_code=422,
@@ -38,7 +42,7 @@ def register_user(*, session: Session, user: UserRegister) -> None:
         hashed_password=hashed_password,
         is_active=True,
         is_verified=not settings.EMAILS_ENABLED,
-        is_super_admin=False,
+        is_super_admin=True,
     )
     session.add(db_user)
     session.commit()

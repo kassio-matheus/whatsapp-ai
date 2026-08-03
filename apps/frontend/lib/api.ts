@@ -227,7 +227,7 @@ export type WhatsAppRealtimeEvent = {
 }
 
 export type ApiError = {
-  detail: string
+  detail: unknown
 }
 
 export class ApiClientError extends Error {
@@ -240,6 +240,35 @@ export class ApiClientError extends Error {
   }
 }
 
+function formatApiError(detail: unknown): string {
+  if (typeof detail === "string" && detail.trim()) {
+    return detail
+  }
+  if (Array.isArray(detail)) {
+    const lines = detail
+      .map((item) => {
+        if (!item || typeof item !== "object") {
+          return ""
+        }
+        const error = item as { loc?: unknown; msg?: unknown }
+        const location = Array.isArray(error.loc)
+          ? error.loc.map((part) => String(part)).join(".")
+          : ""
+        const message =
+          typeof error.msg === "string" && error.msg ? error.msg : "Invalid value"
+        return location ? `${location}: ${message}` : message
+      })
+      .filter(Boolean)
+    if (lines.length > 0) {
+      return lines.join("\n")
+    }
+  }
+  if (detail && typeof detail === "object") {
+    return JSON.stringify(detail)
+  }
+  return "Request failed. Please try again."
+}
+
 async function request<T>(
   path: string,
   init: RequestInit = {},
@@ -249,7 +278,6 @@ async function request<T>(
   if (
     init.body &&
     !headers.has("Content-Type") &&
-    typeof init.body !== "string" &&
     !(init.body instanceof FormData)
   ) {
     headers.set("Content-Type", "application/json")
@@ -265,11 +293,7 @@ async function request<T>(
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as Partial<ApiError>
-    const detail =
-      typeof body.detail === "string"
-        ? body.detail
-        : "Request failed. Please try again."
-    throw new ApiClientError(response.status, detail)
+    throw new ApiClientError(response.status, formatApiError(body.detail))
   }
 
   if (response.status === 204) {
