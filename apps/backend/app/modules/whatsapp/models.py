@@ -3,7 +3,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field as SQLField
 from sqlmodel import SQLModel
@@ -41,17 +41,17 @@ class MessageStatus(str, Enum):
     FAILED = "failed"
 
 
-INTERNAL_MESSAGE_TYPES: tuple[str, ...] = (
-    "system",
-    "reaction",
-    "template",
-    "unknown",
-    "ephemeral",
-)
+#: Message types that are stored for the operator but never delivered to the
+#: WhatsApp contact. AI assistance and internal notes live inside the
+#: conversation timeline without reaching the recipient.
+INTERNAL_MESSAGE_TYPES = frozenset({"note", "ai"})
+
+#: Metadata flag that marks a message as internal-only.
+INTERNAL_METADATA_KEY = "internal"
 
 
 class WhatsAppIntegration(SQLModel, table=True):
-    """A provider-agnostic WhatsApp connection owned by a company."""
+    """A provider-agnostic WhatsApp instance owned by a company."""
 
     __tablename__ = "whatsapp_integrations"
     __table_args__ = (
@@ -267,6 +267,18 @@ class WhatsAppIntegrationResponse(BaseModel):
     updated_at: datetime = Field(description="Last update timestamp.")
 
 
+class WhatsAppInstanceCreate(WhatsAppIntegrationCreate):
+    """Payload for registering a WhatsApp instance."""
+
+
+class WhatsAppInstanceUpdate(WhatsAppIntegrationUpdate):
+    """Payload for updating a WhatsApp instance."""
+
+
+class WhatsAppInstanceResponse(WhatsAppIntegrationResponse):
+    """Public representation of a WhatsApp instance."""
+
+
 class WhatsAppCloudApiCredentials(BaseModel):
     """Credentials and identifiers required by Meta's Cloud API."""
 
@@ -318,7 +330,7 @@ class WhatsAppCloudApiCredentials(BaseModel):
     api_version: str = Field(
         default="v25.0",
         pattern=r"^v\d+\.\d+$",
-        description="Graph API version used for this connection.",
+        description="Graph API version used for this instance.",
         json_schema_extra={"examples": ["v25.0"]},
     )
 
@@ -340,9 +352,9 @@ class WhatsAppCloudApiCredentials(BaseModel):
 
 
 class WhatsAppCloudApiCreate(BaseModel):
-    """Payload for creating and verifying a Meta Cloud API connection."""
+    """Payload for creating and verifying a Meta Cloud API instance."""
 
-    company_id: uuid.UUID = Field(description="Company that owns the connection.")
+    company_id: uuid.UUID = Field(description="Company that owns the instance.")
     name: str = Field(
         min_length=1,
         max_length=255,
@@ -359,7 +371,7 @@ class WhatsAppCloudApiCreate(BaseModel):
 
 
 class WhatsAppCloudApiUpdate(BaseModel):
-    """Payload for updating and re-verifying a Meta Cloud API connection."""
+    """Payload for updating and re-verifying a Meta Cloud API instance."""
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     credentials: WhatsAppCloudApiCredentials
@@ -367,7 +379,7 @@ class WhatsAppCloudApiUpdate(BaseModel):
 
 
 class WhatsAppCloudApiConnectionInfo(BaseModel):
-    """Non-secret connection data returned after talking to Meta."""
+    """Non-secret verification data returned after talking to Meta."""
 
     app_id: str = Field(description="Verified Meta app ID.")
     business_account_id: str = Field(description="Verified WABA ID.")
@@ -394,16 +406,82 @@ class WhatsAppCloudApiConnectionInfo(BaseModel):
 
 
 class WhatsAppCloudApiConnectResponse(BaseModel):
-    """Response for a verified Meta Cloud API connection."""
+    """Response for a verified Meta Cloud API instance."""
 
-    integration: WhatsAppIntegrationResponse
-    connection: WhatsAppCloudApiConnectionInfo
+    instance: WhatsAppInstanceResponse
+    verification: WhatsAppCloudApiConnectionInfo
+
+
+class WhatsAppCloudApiTemplateResponse(BaseModel):
+    """A non-secret Meta message template available to an instance."""
+
+    id: str = Field(description="Meta template identifier.")
+    name: str = Field(description="Approved Meta template name.")
+    language: str = Field(description="Template language code, such as pt_BR.")
+    status: str = Field(description="Current Meta review status.")
+    category: str | None = Field(default=None, description="Meta template category.")
+    components: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Meta template components used to render and parameterize it.",
+    )
+    quality_score: dict[str, Any] | None = Field(
+        default=None, description="Quality data returned by Meta, when available."
+    )
+    rejected_reason: str | None = Field(
+        default=None, description="Meta review feedback for rejected templates."
+    )
+
+
+class WhatsAppCloudApiTemplatePage(BaseModel):
+    """A page of templates read live from the connected WABA."""
+
+    data: list[WhatsAppCloudApiTemplateResponse]
+    next_cursor: str | None = Field(
+        default=None, description="Cursor to request the next page from Meta."
+    )
+
+
+class WhatsAppCloudApiTemplateCreate(BaseModel):
+    """Payload forwarded to Meta to submit a new message template for review."""
+
+    name: str = Field(
+        min_length=1,
+        max_length=512,
+        pattern=r"^[a-z0-9_]+$",
+        description="Lowercase Meta template name using letters, numbers and underscores.",
+    )
+    language: str = Field(
+        min_length=2,
+        max_length=32,
+        description="Meta template language and locale, such as pt_BR.",
+    )
+    category: str = Field(
+        min_length=1,
+        max_length=32,
+        description="Meta category, normally MARKETING, UTILITY or AUTHENTICATION.",
+    )
+    components: list[dict[str, Any]] = Field(
+        min_length=1,
+        description="Components submitted to Meta for template review.",
+    )
+    allow_category_change: bool = Field(
+        default=True,
+        description="Allow Meta to adjust the category during review when appropriate.",
+    )
+
+    @field_validator("language", "category", mode="before")
+    @classmethod
+    def strip_template_values(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
 
 
 class WhatsAppContactCreate(BaseModel):
     """Payload for creating a WhatsApp contact."""
 
-    integration_id: uuid.UUID = Field(description="Integration the contact belongs to.")
+    instance_id: uuid.UUID = Field(
+        description="WhatsApp instance the contact belongs to.",
+        validation_alias=AliasChoices("instance_id", "integration_id"),
+    )
     external_id: str | None = Field(
         default=None,
         max_length=255,
@@ -413,7 +491,10 @@ class WhatsAppContactCreate(BaseModel):
     phone_number: str = Field(
         min_length=1,
         max_length=64,
-        description="Contact phone number in E.164 format.",
+        description=(
+            "International contact phone number. Meta Cloud API contacts are "
+            "stored with country code and digits only."
+        ),
         json_schema_extra={"examples": ["+5521987654321"]},
     )
     name: str | None = Field(
@@ -454,7 +535,7 @@ class WhatsAppContactResponse(BaseModel):
 
     id: uuid.UUID = Field(description="Contact identifier.")
     company_id: uuid.UUID = Field(description="Owning company identifier.")
-    integration_id: uuid.UUID = Field(description="Integration identifier.")
+    instance_id: uuid.UUID = Field(description="WhatsApp instance identifier.")
     external_id: str | None = Field(description="Provider-side contact identifier.")
     phone_number: str = Field(description="Contact phone number.")
     name: str | None = Field(description="Contact display name.")
@@ -469,7 +550,10 @@ class WhatsAppContactResponse(BaseModel):
 class WhatsAppConversationCreate(BaseModel):
     """Payload for creating a WhatsApp conversation."""
 
-    integration_id: uuid.UUID = Field(description="Integration the conversation uses.")
+    instance_id: uuid.UUID = Field(
+        description="WhatsApp instance the conversation uses.",
+        validation_alias=AliasChoices("instance_id", "integration_id"),
+    )
     contact_id: uuid.UUID | None = Field(
         default=None, description="Associated contact, if any."
     )
@@ -511,7 +595,7 @@ class WhatsAppConversationResponse(BaseModel):
 
     id: uuid.UUID = Field(description="Conversation identifier.")
     company_id: uuid.UUID = Field(description="Owning company identifier.")
-    integration_id: uuid.UUID = Field(description="Integration identifier.")
+    instance_id: uuid.UUID = Field(description="WhatsApp instance identifier.")
     contact_id: uuid.UUID | None = Field(description="Associated contact, if any.")
     external_id: str | None = Field(
         description="Provider-side conversation identifier."
@@ -578,6 +662,16 @@ class WhatsAppMessageUpdate(BaseModel):
     sent_at: datetime | None = None
 
 
+class WhatsAppMediaUploadResponse(BaseModel):
+    """Metadata returned after uploading a media file to R2."""
+
+    key: str = Field(description="Object key inside the R2 bucket.")
+    url: str = Field(description="Public or presigned URL of the stored object.")
+    filename: str = Field(description="Sanitized file name.")
+    mime_type: str | None = Field(description="Detected content type.")
+    size_bytes: int = Field(description="Stored object size in bytes.")
+
+
 class WhatsAppMessageResponse(BaseModel):
     """WhatsApp message data returned by the API."""
 
@@ -585,7 +679,7 @@ class WhatsAppMessageResponse(BaseModel):
 
     id: uuid.UUID = Field(description="Message identifier.")
     company_id: uuid.UUID = Field(description="Owning company identifier.")
-    integration_id: uuid.UUID = Field(description="Integration identifier.")
+    instance_id: uuid.UUID = Field(description="WhatsApp instance identifier.")
     conversation_id: uuid.UUID = Field(description="Conversation identifier.")
     external_id: str | None = Field(description="Provider-side message identifier.")
     direction: MessageDirection = Field(description="Inbound or outbound message.")
@@ -598,6 +692,47 @@ class WhatsAppMessageResponse(BaseModel):
     is_active: bool = Field(description="Whether the message is active.")
     created_at: datetime = Field(description="Creation timestamp.")
     updated_at: datetime = Field(description="Last update timestamp.")
+
+
+class WhatsAppNoteCreate(BaseModel):
+    """Payload for creating an internal note on a conversation."""
+
+    content: str = Field(
+        min_length=1,
+        max_length=65535,
+        description=(
+            "Note body. Internal notes are stored in the conversation timeline "
+            "but are never delivered to the WhatsApp contact."
+        ),
+        json_schema_extra={"examples": ["Called the client, agreed on Tuesday."]},
+    )
+
+
+class WhatsAppAiPrompt(BaseModel):
+    """Payload for asking the AI assistant inside a conversation."""
+
+    prompt: str = Field(
+        min_length=1,
+        max_length=16000,
+        description=(
+            "Prompt for the AI assistant. The recent conversation history is "
+            "included as context. AI messages are stored in the timeline but "
+            "never delivered to the WhatsApp contact."
+        ),
+        json_schema_extra={"examples": ["Draft a friendly reply to the customer."]},
+    )
+
+
+class WhatsAppAiResponse(BaseModel):
+    """Result of an AI assistant call within a conversation."""
+
+    prompt_message: WhatsAppMessageResponse = Field(
+        description="Stored internal message with the operator prompt."
+    )
+    message: WhatsAppMessageResponse = Field(
+        description="Stored internal message with the AI assistant reply."
+    )
+    response: str = Field(description="Generated AI assistant reply.")
 
 
 # Kept as type aliases so consumers can use the canonical values without

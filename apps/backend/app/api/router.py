@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.modules.ai.router import router as ai_router
+from app.modules.ai_whatsapp.router import router as ai_whatsapp_router
 from app.modules.auth.router import router as auth_router
 from app.modules.companies.router import router as companies_router
 from app.modules.health.router import router as health_router
@@ -35,6 +36,12 @@ api_router.include_router(
     whatsapp_router,
     prefix="/whatsapp",
     tags=["WhatsApp"],
+    dependencies=[Depends(require_auth)],
+)
+api_router.include_router(
+    ai_whatsapp_router,
+    prefix="/whatsapp",
+    tags=["WhatsApp AI"],
     dependencies=[Depends(require_auth)],
 )
 api_router.include_router(

@@ -153,3 +153,118 @@ def test_whatsapp_resources_are_company_scoped(database) -> None:
                 company_id=company.id,
             )
         assert error.value.status_code == 404
+
+
+def test_whatsapp_note_is_stored_but_never_delivered(database) -> None:
+    with Session(database) as session:
+        user, company = _company(session, email="notes@example.com")
+        integration = service.create_integration(
+            session=session,
+            current_user=user,
+            data=WhatsAppIntegrationCreate(
+                company_id=company.id,
+                name="Official API",
+                integration_type=IntegrationType.OFFICIAL,
+                adapter="test-official",
+            ),
+        )
+        contact = service.create_contact(
+            session=session,
+            current_user=user,
+            data=WhatsAppContactCreate(
+                integration_id=integration.id,
+                phone_number="+5511999999999",
+            ),
+        )
+        conversation = service.create_conversation(
+            session=session,
+            current_user=user,
+            data=WhatsAppConversationCreate(
+                integration_id=integration.id,
+                contact_id=contact.id,
+            ),
+        )
+
+        note = service.create_note(
+            session=session,
+            current_user=user,
+            conversation_id=conversation.id,
+            content="Call back on Tuesday.",
+        )
+
+        assert note.message_type == "note"
+        assert note.metadata_json.get("internal") is True
+        assert note.direction == MessageDirection.INBOUND.value
+        assert note.status == "sent"
+        assert note.external_id is None
+        assert note.content == "Call back on Tuesday."
+
+
+def test_whatsapp_ai_message_is_stored_but_never_delivered(database, monkeypatch) -> None:
+    class FakeLLM:
+        def generate(self, *, prompt, context, system_prompt=None, auth_token=None):
+            return type("Result", (), {"response": "Draft reply: sounds good!"})()
+
+    monkeypatch.setattr(
+        "app.modules.ai.service.llm",
+        FakeLLM(),
+    )
+
+    with Session(database) as session:
+        user, company = _company(session, email="ai@example.com")
+        integration = service.create_integration(
+            session=session,
+            current_user=user,
+            data=WhatsAppIntegrationCreate(
+                company_id=company.id,
+                name="Official API",
+                integration_type=IntegrationType.OFFICIAL,
+                adapter="test-official",
+            ),
+        )
+        contact = service.create_contact(
+            session=session,
+            current_user=user,
+            data=WhatsAppContactCreate(
+                integration_id=integration.id,
+                phone_number="+5511999999999",
+            ),
+        )
+        conversation = service.create_conversation(
+            session=session,
+            current_user=user,
+            data=WhatsAppConversationCreate(
+                integration_id=integration.id,
+                contact_id=contact.id,
+            ),
+        )
+
+        prompt_message, assistant_message, response = service.create_ai_message(
+            session=session,
+            current_user=user,
+            conversation_id=conversation.id,
+            prompt="Draft a reply.",
+        )
+
+        assert response == "Draft reply: sounds good!"
+        assert prompt_message.message_type == "ai"
+        assert prompt_message.metadata_json == {
+            "internal": True,
+            "kind": "ai",
+            "role": "user",
+        }
+        assert assistant_message.message_type == "ai"
+        assert assistant_message.metadata_json == {
+            "internal": True,
+            "kind": "ai",
+            "role": "assistant",
+        }
+        assert prompt_message.external_id is None
+        assert assistant_message.external_id is None
+        assert len(
+            service.list_messages(
+                session=session,
+                current_user=user,
+                conversation_id=conversation.id,
+            )
+        ) == 2

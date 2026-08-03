@@ -8,6 +8,10 @@ from app.core.config import settings
 
 # Import all models so they are registered in SQLModel.metadata
 from app.modules.ai.models import ChatFile, ChatSession, Message  # noqa: F401
+from app.modules.ai_whatsapp.models import (  # noqa: F401
+    ConversationAISetting,
+    WhatsAppAISettings,
+)
 from app.modules.auth.models import User  # noqa: F401
 from app.modules.companies.models import Company  # noqa: F401
 from app.modules.whatsapp.models import (  # noqa: F401

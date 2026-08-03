@@ -23,6 +23,14 @@ TOOL_GUIDANCE = (
     "Act as the authenticated user who owns the current conversation."
 )
 
+#: Instruction appended when the current session is restricted to a subset of
+#: the available tools (for example a WhatsApp contact with limited MCP access).
+SCOPED_TOOL_GUIDANCE = (
+    "Only a limited subset of the backend tools is enabled for this session. "
+    "Never try to call a tool that is not listed above, and do not ask the user "
+    "for credentials or for actions that require unavailable tools."
+)
+
 MAX_REMOTE_CALLS = 10
 
 
@@ -38,6 +46,7 @@ class OpenAI(AIPlatform):
         context: list[dict[str, str]] | None = None,
         system_prompt: str | None = None,
         auth_token: str | None = None,
+        allowed_tools: list[str] | None = None,
     ) -> ChatResponseStructure:
         input_items: list[dict[str, Any]] = []
 
@@ -52,13 +61,19 @@ class OpenAI(AIPlatform):
 
         input_items.append({"role": "user", "content": prompt})
 
-        instruction = "\n\n".join(p for p in (TOOL_GUIDANCE, system_prompt) if p)
+        parts = [TOOL_GUIDANCE]
+        if allowed_tools is not None:
+            parts.append(SCOPED_TOOL_GUIDANCE)
+        if system_prompt:
+            parts.append(system_prompt)
+        instruction = "\n\n".join(parts)
 
         return asyncio.run(
             self._generate_async(
                 input_items=input_items,
                 instruction=instruction,
                 auth_token=auth_token,
+                allowed_tools=allowed_tools,
             )
         )
 
@@ -97,14 +112,20 @@ class OpenAI(AIPlatform):
         input_items: list[dict[str, Any]],
         instruction: str | None,
         auth_token: str | None,
+        allowed_tools: list[str] | None,
     ) -> ChatResponseStructure:
         async with (
             AsyncOpenAI(api_key=self.api_key) as client,
             mcp_session(auth_token=auth_token) as session,
         ):
             mcp_tools = (await session.list_tools()).tools
+            if allowed_tools is not None:
+                allowed_names = set(allowed_tools)
+                mcp_tools = [tool for tool in mcp_tools if tool.name in allowed_names]
+                allowed_tool_names = allowed_names
+            else:
+                allowed_tool_names = {tool.name for tool in mcp_tools}
             tool_definitions = [self._to_openai_tool(tool) for tool in mcp_tools]
-            allowed_tool_names = {tool.name for tool in mcp_tools}
 
             failed_calls: dict[tuple[str, str], dict[str, object]] = {}
 

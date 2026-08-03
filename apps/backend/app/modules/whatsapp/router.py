@@ -1,15 +1,24 @@
+import asyncio
+import json
+import queue
 import uuid
 
-from fastapi import APIRouter, Header, Query, Request
-from starlette.responses import PlainTextResponse
+from fastapi import APIRouter, File, Header, Query, Request, UploadFile
+from starlette.responses import PlainTextResponse, Response, StreamingResponse
 
-from app.utils.deps import CurrentUser, SessionDep
+from app.utils.deps import AIProtected, CurrentUser, SessionDep, TokenDep
 
 from . import service
+from .events import whatsapp_event_broker
 from .models import (
+    WhatsAppAiPrompt,
+    WhatsAppAiResponse,
     WhatsAppCloudApiConnectionInfo,
     WhatsAppCloudApiConnectResponse,
     WhatsAppCloudApiCreate,
+    WhatsAppCloudApiTemplateCreate,
+    WhatsAppCloudApiTemplatePage,
+    WhatsAppCloudApiTemplateResponse,
     WhatsAppCloudApiUpdate,
     WhatsAppContactCreate,
     WhatsAppContactResponse,
@@ -17,20 +26,22 @@ from .models import (
     WhatsAppConversationCreate,
     WhatsAppConversationResponse,
     WhatsAppConversationUpdate,
-    WhatsAppIntegrationCreate,
-    WhatsAppIntegrationResponse,
-    WhatsAppIntegrationUpdate,
+    WhatsAppInstanceCreate,
+    WhatsAppInstanceResponse,
+    WhatsAppInstanceUpdate,
+    WhatsAppMediaUploadResponse,
     WhatsAppMessageCreate,
     WhatsAppMessageResponse,
     WhatsAppMessageUpdate,
+    WhatsAppNoteCreate,
 )
 
 router = APIRouter()
 webhook_router = APIRouter()
 
 
-def _integration_response(db) -> WhatsAppIntegrationResponse:
-    return WhatsAppIntegrationResponse(
+def _integration_response(db) -> WhatsAppInstanceResponse:
+    return WhatsAppInstanceResponse(
         id=db.id,
         company_id=db.company_id,
         name=db.name,
@@ -50,7 +61,7 @@ def _contact_response(db) -> WhatsAppContactResponse:
     return WhatsAppContactResponse(
         id=db.id,
         company_id=db.company_id,
-        integration_id=db.integration_id,
+        instance_id=db.integration_id,
         external_id=db.external_id,
         phone_number=db.phone_number,
         name=db.name,
@@ -67,7 +78,7 @@ def _conversation_response(db) -> WhatsAppConversationResponse:
     return WhatsAppConversationResponse(
         id=db.id,
         company_id=db.company_id,
-        integration_id=db.integration_id,
+        instance_id=db.integration_id,
         contact_id=db.contact_id,
         external_id=db.external_id,
         title=db.title,
@@ -84,7 +95,7 @@ def _message_response(db) -> WhatsAppMessageResponse:
     return WhatsAppMessageResponse(
         id=db.id,
         company_id=db.company_id,
-        integration_id=db.integration_id,
+        instance_id=db.integration_id,
         conversation_id=db.conversation_id,
         external_id=db.external_id,
         direction=db.direction,
@@ -107,8 +118,8 @@ def _cloud_response(
     webhook_subscribed: bool,
 ) -> WhatsAppCloudApiConnectResponse:
     return WhatsAppCloudApiConnectResponse(
-        integration=_integration_response(db),
-        connection=WhatsAppCloudApiConnectionInfo(
+        instance=_integration_response(db),
+        verification=WhatsAppCloudApiConnectionInfo(
             app_id=connection.app_id,
             business_account_id=connection.business_account_id,
             business_account_name=connection.business_account_name,
@@ -122,13 +133,13 @@ def _cloud_response(
 
 
 @router.post(
-    "/cloud-api/integrations",
+    "/instances/cloud-api",
     status_code=201,
     response_model=WhatsAppCloudApiConnectResponse,
-    summary="Connect Meta WhatsApp Cloud API",
+    summary="Connect a Meta Cloud API instance",
     description=(
         "Verify the Meta app, WABA and phone number, optionally subscribe the "
-        "app to the WABA webhooks, and persist a non-coexistence connection."
+        "app to the WABA webhooks, and persist a non-coexistence instance."
     ),
 )
 def create_cloud_api_integration(
@@ -149,10 +160,10 @@ def create_cloud_api_integration(
 
 
 @router.put(
-    "/cloud-api/integrations/{integration_id}",
+    "/instances/{integration_id}/cloud-api",
     response_model=WhatsAppCloudApiConnectResponse,
-    summary="Update Meta WhatsApp Cloud API connection",
-    description="Replace credentials and verify the Meta Cloud API connection again.",
+    summary="Update a Meta Cloud API instance",
+    description="Replace credentials and verify the Meta Cloud API instance again.",
 )
 def update_cloud_api_integration(
     integration_id: uuid.UUID,
@@ -174,10 +185,10 @@ def update_cloud_api_integration(
 
 
 @router.post(
-    "/cloud-api/integrations/{integration_id}/verify",
+    "/instances/{integration_id}/verify",
     response_model=WhatsAppCloudApiConnectResponse,
-    summary="Verify a Meta WhatsApp Cloud API connection",
-    description="Check the stored credentials and optionally re-subscribe the WABA.",
+    summary="Verify a Meta Cloud API instance",
+    description="Check the stored instance credentials and optionally re-subscribe the WABA.",
 )
 def verify_cloud_api_integration(
     integration_id: uuid.UUID,
@@ -195,6 +206,89 @@ def verify_cloud_api_integration(
         integration,
         connection=connection,
         webhook_subscribed=webhook_subscribed,
+    )
+
+
+@router.get(
+    "/instances/{integration_id}/cloud-api/templates",
+    response_model=WhatsAppCloudApiTemplatePage,
+    summary="List live Meta message templates",
+    description=(
+        "Read the current message-template catalog from the connected WABA. "
+        "Only non-secret template data is returned."
+    ),
+)
+def list_cloud_api_templates(
+    integration_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentUser,
+    limit: int = Query(default=100, ge=1, le=250),
+    after: str | None = Query(default=None),
+) -> WhatsAppCloudApiTemplatePage:
+    return service.list_cloud_api_templates(
+        session=session,
+        integration_id=integration_id,
+        current_user=current_user,
+        limit=limit,
+        after=after,
+    )
+
+
+@router.post(
+    "/instances/{integration_id}/cloud-api/templates",
+    status_code=201,
+    response_model=WhatsAppCloudApiTemplateResponse,
+    summary="Submit a Meta message template",
+    description=(
+        "Submit a template to Meta's review flow. It becomes selectable in the "
+        "chat only after Meta reports an APPROVED status."
+    ),
+)
+def create_cloud_api_template(
+    integration_id: uuid.UUID,
+    data: WhatsAppCloudApiTemplateCreate,
+    session: SessionDep,
+    current_user: CurrentUser,
+) -> WhatsAppCloudApiTemplateResponse:
+    return service.create_cloud_api_template(
+        session=session,
+        integration_id=integration_id,
+        current_user=current_user,
+        data=data,
+    )
+
+
+@router.delete(
+    "/instances/{integration_id}/cloud-api/templates",
+    status_code=204,
+    summary="Delete a Meta message template",
+    description=(
+        "Remove a template from the connected WABA. Meta's template-management "
+        "contract requires the template name; pass the Meta template ID as "
+        "hsm_id to delete a single language variant instead of every variant "
+        "that shares the name."
+    ),
+)
+def delete_cloud_api_template(
+    integration_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentUser,
+    name: str = Query(
+        min_length=1,
+        max_length=512,
+        description="Meta template name to delete.",
+    ),
+    hsm_id: str | None = Query(
+        default=None,
+        description="Meta template ID (HSM). Restricts the delete to one variant.",
+    ),
+) -> None:
+    service.delete_cloud_api_template(
+        session=session,
+        integration_id=integration_id,
+        current_user=current_user,
+        template_name=name,
+        hsm_id=hsm_id,
     )
 
 
@@ -239,20 +333,77 @@ async def receive_meta_webhook(
 
 
 @router.post(
-    "/integrations",
+    "/media/upload",
     status_code=201,
-    response_model=WhatsAppIntegrationResponse,
-    summary="Create a WhatsApp integration",
+    response_model=WhatsAppMediaUploadResponse,
+    summary="Upload media to storage",
     description=(
-        "Register an official or unofficial integration. The adapter key is "
+        "Upload a media file to Cloudflare R2 and return its URL so it can be "
+        "used as media_url in an outbound WhatsApp message."
+    ),
+)
+def upload_media(
+    session: SessionDep,
+    current_user: CurrentUser,
+    company_id: uuid.UUID | None = Query(default=None),  # noqa: B008
+    file: UploadFile = File(...),  # noqa: B008
+) -> WhatsAppMediaUploadResponse:
+    obj = service.upload_media(
+        session=session,
+        current_user=current_user,
+        file=file,
+        company_id=company_id,
+    )
+    return WhatsAppMediaUploadResponse(
+        key=obj.key,
+        url=obj.url,
+        filename=obj.filename or file.filename or "media",
+        mime_type=obj.content_type,
+        size_bytes=obj.size_bytes,
+    )
+
+
+@router.get(
+    "/media/{key:path}",
+    response_class=Response,
+    summary="Download media from storage",
+    description=(
+        "Stream a media object stored in Cloudflare R2. Use the key returned "
+        "by the upload endpoint or stored in message metadata."
+    ),
+)
+def get_media(
+    key: str,
+    session: SessionDep,
+    current_user: CurrentUser,
+) -> Response:
+    body, content_type = service.download_media(key=key)
+    headers = {
+        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": 'inline; filename="media"',
+    }
+    return Response(
+        content=body,
+        media_type=content_type or "application/octet-stream",
+        headers=headers,
+    )
+
+
+@router.post(
+    "/instances",
+    status_code=201,
+    response_model=WhatsAppInstanceResponse,
+    summary="Create a WhatsApp instance",
+    description=(
+        "Register an official or unofficial instance. The adapter key is "
         "application-defined and is not tied to a specific library."
     ),
 )
 def create_integration(
-    data: WhatsAppIntegrationCreate,
+    data: WhatsAppInstanceCreate,
     session: SessionDep,
     current_user: CurrentUser,
-) -> WhatsAppIntegrationResponse:
+) -> WhatsAppInstanceResponse:
     return _integration_response(
         service.create_integration(
             session=session,
@@ -263,16 +414,16 @@ def create_integration(
 
 
 @router.get(
-    "/integrations",
-    response_model=list[WhatsAppIntegrationResponse],
-    summary="List WhatsApp integrations",
-    description="List the WhatsApp integrations accessible to the authenticated user.",
+    "/instances",
+    response_model=list[WhatsAppInstanceResponse],
+    summary="List WhatsApp instances",
+    description="List the WhatsApp instances accessible to the authenticated user.",
 )
 def list_integrations(
     session: SessionDep,
     current_user: CurrentUser,
     company_id: uuid.UUID | None = None,
-) -> list[WhatsAppIntegrationResponse]:
+) -> list[WhatsAppInstanceResponse]:
     return [
         _integration_response(item)
         for item in service.list_integrations(
@@ -284,16 +435,63 @@ def list_integrations(
 
 
 @router.get(
-    "/integrations/{integration_id}",
-    response_model=WhatsAppIntegrationResponse,
-    summary="Get a WhatsApp integration",
-    description="Return a single WhatsApp integration by its identifier.",
+    "/instances/events",
+    response_class=StreamingResponse,
+    summary="Subscribe to WhatsApp instance events",
+    description=(
+        "Authenticated server-sent events for a company's WhatsApp instances, "
+        "inbox changes, and message status changes. Event payloads contain only "
+        "identifiers; clients fetch the relevant resource with their bearer token."
+    ),
+)
+async def stream_instance_events(
+    company_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentUser,
+) -> StreamingResponse:
+    # The regular list operation centralizes the tenant-access check.
+    service.list_integrations(
+        session=session,
+        current_user=current_user,
+        company_id=company_id,
+    )
+
+    async def event_stream():
+        with whatsapp_event_broker.subscribe(company_id) as subscriber:
+            yield "retry: 3000\n\n"
+            while True:
+                try:
+                    event = await asyncio.to_thread(subscriber.get, True, 20)
+                except queue.Empty:
+                    yield ": keep-alive\n\n"
+                    continue
+                yield (
+                    f"event: {event.type}\n"
+                    f"data: {json.dumps(event.payload(), separators=(',', ':'))}\n\n"
+                )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get(
+    "/instances/{integration_id}",
+    response_model=WhatsAppInstanceResponse,
+    summary="Get a WhatsApp instance",
+    description="Return a single WhatsApp instance by its identifier.",
 )
 def get_integration(
     integration_id: uuid.UUID,
     session: SessionDep,
     current_user: CurrentUser,
-) -> WhatsAppIntegrationResponse:
+) -> WhatsAppInstanceResponse:
     return _integration_response(
         service.get_integration(
             session=session,
@@ -304,17 +502,17 @@ def get_integration(
 
 
 @router.put(
-    "/integrations/{integration_id}",
-    response_model=WhatsAppIntegrationResponse,
-    summary="Update a WhatsApp integration",
-    description="Edit an existing WhatsApp integration.",
+    "/instances/{integration_id}",
+    response_model=WhatsAppInstanceResponse,
+    summary="Update a WhatsApp instance",
+    description="Edit an existing WhatsApp instance.",
 )
 def update_integration(
     integration_id: uuid.UUID,
-    data: WhatsAppIntegrationUpdate,
+    data: WhatsAppInstanceUpdate,
     session: SessionDep,
     current_user: CurrentUser,
-) -> WhatsAppIntegrationResponse:
+) -> WhatsAppInstanceResponse:
     return _integration_response(
         service.update_integration(
             session=session,
@@ -326,10 +524,10 @@ def update_integration(
 
 
 @router.delete(
-    "/integrations/{integration_id}",
+    "/instances/{integration_id}",
     status_code=204,
-    summary="Delete a WhatsApp integration",
-    description="Soft-delete a WhatsApp integration.",
+    summary="Delete a WhatsApp instance",
+    description="Soft-delete a WhatsApp instance.",
 )
 def delete_integration(
     integration_id: uuid.UUID,
@@ -348,7 +546,7 @@ def delete_integration(
     status_code=201,
     response_model=WhatsAppContactResponse,
     summary="Create a WhatsApp contact",
-    description="Register a new WhatsApp contact within an integration.",
+    description="Register a new WhatsApp contact within an instance.",
 )
 def create_contact(
     data: WhatsAppContactCreate,
@@ -368,12 +566,12 @@ def create_contact(
     "/contacts",
     response_model=list[WhatsAppContactResponse],
     summary="List WhatsApp contacts",
-    description="List contacts, optionally filtered by integration or company.",
+    description="List contacts, optionally filtered by instance or company.",
 )
 def list_contacts(
     session: SessionDep,
     current_user: CurrentUser,
-    integration_id: uuid.UUID | None = None,
+    instance_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
     limit: int = Query(
         default=50, ge=1, le=200, description="Maximum number of contacts to return."
@@ -385,7 +583,7 @@ def list_contacts(
         for item in service.list_contacts(
             session=session,
             current_user=current_user,
-            integration_id=integration_id,
+            integration_id=instance_id,
             company_id=company_id,
             limit=limit,
             offset=offset,
@@ -458,7 +656,7 @@ def delete_contact(
     status_code=201,
     response_model=WhatsAppConversationResponse,
     summary="Create a WhatsApp conversation",
-    description="Start a new WhatsApp conversation linked to an integration and optionally a contact.",
+    description="Start a new WhatsApp conversation linked to an instance and optionally a contact.",
 )
 def create_conversation(
     data: WhatsAppConversationCreate,
@@ -478,12 +676,12 @@ def create_conversation(
     "/conversations",
     response_model=list[WhatsAppConversationResponse],
     summary="List WhatsApp conversations",
-    description="List conversations, optionally filtered by integration, company or contact.",
+    description="List conversations, optionally filtered by instance, company or contact.",
 )
 def list_conversations(
     session: SessionDep,
     current_user: CurrentUser,
-    integration_id: uuid.UUID | None = None,
+    instance_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
     contact_id: uuid.UUID | None = None,
     limit: int = Query(
@@ -501,7 +699,7 @@ def list_conversations(
         for item in service.list_conversations(
             session=session,
             current_user=current_user,
-            integration_id=integration_id,
+            integration_id=instance_id,
             company_id=company_id,
             contact_id=contact_id,
             limit=limit,
@@ -557,6 +755,64 @@ def list_conversation_messages(
     ]
 
 
+@router.post(
+    "/conversations/{conversation_id}/note",
+    status_code=201,
+    response_model=WhatsAppMessageResponse,
+    summary="Create an internal note",
+    description=(
+        "Store an internal note in a conversation timeline. Notes are visible "
+        "to operators but are never delivered to the WhatsApp contact."
+    ),
+)
+def create_conversation_note(
+    conversation_id: uuid.UUID,
+    data: WhatsAppNoteCreate,
+    session: SessionDep,
+    current_user: CurrentUser,
+) -> WhatsAppMessageResponse:
+    return _message_response(
+        service.create_note(
+            session=session,
+            current_user=current_user,
+            conversation_id=conversation_id,
+            content=data.content,
+        )
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/ai",
+    status_code=201,
+    response_model=WhatsAppAiResponse,
+    summary="Ask the AI assistant in a conversation",
+    description=(
+        "Send a prompt to the AI assistant using the conversation history as "
+        "context. The prompt and the AI reply are stored as internal messages "
+        "that are never delivered to the WhatsApp contact."
+    ),
+)
+def create_conversation_ai_message(
+    conversation_id: uuid.UUID,
+    data: WhatsAppAiPrompt,
+    session: SessionDep,
+    current_user: CurrentUser,
+    token: TokenDep,
+) -> WhatsAppAiResponse:
+    prompt_message, assistant_message, response_text = service.create_ai_message(
+        session=session,
+        current_user=current_user,
+        conversation_id=conversation_id,
+        prompt=data.prompt,
+        auth_token=token,
+    )
+    return WhatsAppAiResponse(
+        prompt_message=_message_response(prompt_message),
+        message=_message_response(assistant_message),
+        response=response_text,
+    )
+
+
 @router.put(
     "/conversations/{conversation_id}",
     response_model=WhatsAppConversationResponse,
@@ -608,6 +864,7 @@ def create_message(
     data: WhatsAppMessageCreate,
     session: SessionDep,
     current_user: CurrentUser,
+    _: AIProtected,
 ) -> WhatsAppMessageResponse:
     return _message_response(
         service.create_message(
@@ -622,13 +879,13 @@ def create_message(
     "/messages",
     response_model=list[WhatsAppMessageResponse],
     summary="List WhatsApp messages",
-    description="List messages, optionally filtered by conversation, integration or company.",
+    description="List messages, optionally filtered by conversation, instance or company.",
 )
 def list_messages(
     session: SessionDep,
     current_user: CurrentUser,
     conversation_id: uuid.UUID | None = None,
-    integration_id: uuid.UUID | None = None,
+    instance_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
     limit: int = Query(
         default=100, ge=1, le=500, description="Maximum number of messages to return."
@@ -641,7 +898,7 @@ def list_messages(
             session=session,
             current_user=current_user,
             conversation_id=conversation_id,
-            integration_id=integration_id,
+            integration_id=instance_id,
             company_id=company_id,
             limit=limit,
             offset=offset,

@@ -24,6 +24,7 @@ from .models import (
     WhatsAppIntegration,
     WhatsAppMessage,
 )
+from .phone_numbers import format_phone_number_for_meta
 
 META_CLOUD_API_ADAPTER = "whatsapp_cloud"
 GRAPH_API_BASE_URL = "https://graph.facebook.com"
@@ -63,6 +64,33 @@ class CloudApiConnectionInfo:
     display_phone_number: str | None
     verified_name: str | None
     quality_rating: str | None
+
+
+@dataclass(frozen=True)
+class MediaDownload:
+    """A media file fetched from the Meta Graph API."""
+
+    data: bytes
+    mime_type: str | None
+    filename: str | None = None
+
+
+@dataclass(frozen=True)
+class CloudApiMessageTemplate:
+    id: str
+    name: str
+    language: str
+    status: str
+    category: str | None
+    components: list[dict[str, Any]]
+    quality_score: dict[str, Any] | None
+    rejected_reason: str | None
+
+
+@dataclass(frozen=True)
+class CloudApiMessageTemplatePage:
+    data: list[CloudApiMessageTemplate]
+    next_cursor: str | None
 
 
 def _error_from_payload(
@@ -250,11 +278,7 @@ class MetaCloudApiClient:
         response = self._request(
             "GET",
             f"/{self.credentials.business_account_id}/phone_numbers",
-            params={
-                "fields": (
-                    "id,display_phone_number,verified_name,quality_rating"
-                )
-            },
+            params={"fields": ("id,display_phone_number,verified_name,quality_rating")},
         )
         items = response.get("data", [])
         if not isinstance(items, list):
@@ -302,13 +326,137 @@ class MetaCloudApiClient:
         )
         return response.get("success") is True or response.get("success") == "true"
 
+    def retrieve_media(self, media_id: str) -> MediaDownload:
+        """Fetch a media object and its bytes from the Graph API.
+
+        Media webhook payloads carry only a media ``id``. This method resolves
+        the media URL and downloads the file so it can be stored permanently.
+        """
+        info = self._request(
+            "GET",
+            f"/{media_id}",
+            params={"fields": "url,mime_type,file_size,sha256"},
+        )
+        url = info.get("url")
+        if not isinstance(url, str) or not url:
+            raise MetaCloudApiError(
+                "Meta returned a media object without a downloadable URL",
+                status_code=422,
+            )
+        request = Request(url, method="GET")
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                data = response.read()
+        except HTTPError as exc:
+            raise MetaCloudApiError(
+                f"Could not download Meta media: {exc}", status_code=exc.code
+            ) from exc
+        except URLError as exc:
+            raise MetaCloudApiError(
+                "Could not reach Meta media server", status_code=502
+            ) from exc
+        mime_type = info.get("mime_type")
+        filename = info.get("filename")
+        return MediaDownload(
+            data=data,
+            mime_type=str(mime_type) if isinstance(mime_type, str) else None,
+            filename=str(filename) if isinstance(filename, str) else None,
+        )
+
+    def get_message_templates(
+        self, *, limit: int = 100, after: str | None = None
+    ) -> CloudApiMessageTemplatePage:
+        """Read the current template catalog directly from the connected WABA."""
+
+        params = {
+            "fields": (
+                "id,name,language,status,category,components,quality_score,"
+                "rejected_reason"
+            ),
+            "limit": str(limit),
+        }
+        if after:
+            params["after"] = after
+        response = self._request(
+            "GET",
+            f"/{self.credentials.business_account_id}/message_templates",
+            params=params,
+        )
+        items = response.get("data", [])
+        if not isinstance(items, list):
+            raise MetaCloudApiError("Meta returned an invalid template catalog")
+
+        templates: list[CloudApiMessageTemplate] = []
+        for item in items:
+            if not isinstance(item, dict) or not item.get("id") or not item.get("name"):
+                continue
+            components = item.get("components")
+            quality_score = item.get("quality_score")
+            templates.append(
+                CloudApiMessageTemplate(
+                    id=str(item["id"]),
+                    name=str(item["name"]),
+                    language=str(item.get("language") or ""),
+                    status=str(item.get("status") or "UNKNOWN"),
+                    category=(str(item["category"]) if item.get("category") else None),
+                    components=[part for part in components if isinstance(part, dict)]
+                    if isinstance(components, list)
+                    else [],
+                    quality_score=quality_score
+                    if isinstance(quality_score, dict)
+                    else None,
+                    rejected_reason=(
+                        str(item["rejected_reason"])
+                        if item.get("rejected_reason")
+                        else None
+                    ),
+                )
+            )
+        paging = response.get("paging")
+        cursors = paging.get("cursors") if isinstance(paging, dict) else None
+        next_cursor = cursors.get("after") if isinstance(cursors, dict) else None
+        return CloudApiMessageTemplatePage(data=templates, next_cursor=next_cursor)
+
+    def create_message_template(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Submit a template to Meta's review workflow."""
+
+        return self._request(
+            "POST",
+            f"/{self.credentials.business_account_id}/message_templates",
+            payload=payload,
+        )
+
+    def delete_message_template(
+        self, *, name: str, hsm_id: str | None = None
+    ) -> bool:
+        """Delete a template from the connected WABA.
+
+        Per the Meta template-management contract, deleting by ``name`` removes
+        every language variant that shares the name. Pass ``hsm_id`` to remove a
+        single variant of that name.
+        """
+
+        params: dict[str, str] = {"name": name}
+        if hsm_id:
+            params["hsm_id"] = hsm_id
+        response = self._request(
+            "DELETE",
+            f"/{self.credentials.business_account_id}/message_templates",
+            params=params,
+        )
+        return response.get("success") is True or response.get("success") == "true"
+
     def send_message(
         self,
         *,
         to: str,
         message: WhatsAppMessage,
     ) -> AdapterMessageResult:
-        payload = _build_message_payload(to=to, message=message)
+        try:
+            normalized_to = format_phone_number_for_meta(to)
+        except ValueError as exc:
+            raise MetaCloudApiError(str(exc), status_code=422) from exc
+        payload = _build_message_payload(to=normalized_to, message=message)
         response = self._request(
             "POST",
             f"/{self.credentials.phone_number_id}/messages",
@@ -355,7 +503,8 @@ def verify_webhook_signature(
 
     if not signature_header or not signature_header.startswith("sha256="):
         return False
-    expected = "sha256=" + hmac.new(
-        app_secret.encode("utf-8"), payload, hashlib.sha256
-    ).hexdigest()
+    expected = (
+        "sha256="
+        + hmac.new(app_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    )
     return hmac.compare_digest(expected, signature_header)

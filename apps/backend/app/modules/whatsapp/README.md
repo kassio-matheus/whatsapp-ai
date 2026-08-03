@@ -4,10 +4,10 @@
 
 The first concrete connector is `whatsapp_cloud`, backed directly by Meta's
 Graph API. It does not use Embedded Signup or WhatsApp Business App
-coexistence. The connection endpoint verifies the WABA and the selected phone
+coexistence. The instance endpoint verifies the WABA and the selected phone
 number before saving it, and can subscribe the app to the WABA webhook events.
 
-Create a connection with `POST /api/v1/whatsapp/cloud-api/integrations`:
+Create an instance with `POST /api/v1/whatsapp/instances/cloud-api`:
 
 ```json
 {
@@ -43,7 +43,7 @@ Credentials are never returned in API responses. Protect the database and use
 encryption at rest for the JSON credentials column in production.
 
 The module stores a normalized WhatsApp domain and does not depend on a
-provider SDK. The integration record identifies the transport with two
+provider SDK. Each instance identifies the transport with two
 application-defined values:
 
 - `integration_type`: `official` or `unofficial`.
@@ -62,8 +62,8 @@ calls them directly; they validate the verification token or App Secret.
 
 | Resource | Create | Read | Update | Delete |
 | --- | --- | --- | --- | --- |
-| Integrations | `POST /integrations` | `GET /integrations`, `GET /integrations/{id}` | `PUT /integrations/{id}` | `DELETE /integrations/{id}` |
-| Meta Cloud API | `POST /cloud-api/integrations` | — | `PUT /cloud-api/integrations/{id}`, `POST /cloud-api/integrations/{id}/verify` | — |
+| Instances | `POST /instances` | `GET /instances`, `GET /instances/{id}` | `PUT /instances/{id}` | `DELETE /instances/{id}` |
+| Meta Cloud API | `POST /instances/cloud-api` | — | `PUT /instances/{id}/cloud-api`, `POST /instances/{id}/verify` | — |
 | Contacts | `POST /contacts` | `GET /contacts`, `GET /contacts/{id}` | `PUT /contacts/{id}` | `DELETE /contacts/{id}` |
 | Conversations | `POST /conversations` | `GET /conversations`, `GET /conversations/{id}` | `PUT /conversations/{id}` | `DELETE /conversations/{id}` |
 | Messages | `POST /messages` | `GET /messages`, `GET /messages/{id}` | `PUT /messages/{id}` | `DELETE /messages/{id}` |
@@ -71,7 +71,16 @@ calls them directly; they validate the verification token or App Secret.
 Messages for one conversation can also be read with
 `GET /conversations/{conversation_id}/messages`.
 
-Deletes are soft deletes. `company_id` is required when an integration is
+The inbox is synchronized through the authenticated SSE endpoint
+`GET /instances/events?company_id={company_id}`. It emits instance, contact,
+conversation and message changes after the database transaction succeeds.
+The browser then reloads the scoped resource with its bearer token; event
+frames never contain credentials, access tokens, or raw provider payloads.
+The included broker is process-local, which is appropriate for a single API
+process. Before running multiple API replicas, replace it with a shared
+broker such as Redis Pub/Sub so every replica fans out the same event.
+
+Deletes are soft deletes. `company_id` is required when an instance is
 created. For a regular company member, the value must be the member's company;
 an owner can select one of their active companies with the optional
 `company_id` query parameter when listing resources.
