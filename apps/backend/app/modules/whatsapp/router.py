@@ -292,6 +292,42 @@ def delete_cloud_api_template(
     )
 
 
+@router.put(
+    "/instances/{integration_id}/cloud-api/templates",
+    response_model=WhatsAppCloudApiTemplateResponse,
+    summary="Replace a Meta message template",
+    description=(
+        "Meta message templates are immutable, so an edit is delivered as a new "
+        "template submitted for review while the previous one is removed. The "
+        "current template name is required as previous_name; pass the Meta "
+        "template ID as previous_hsm_id to replace only that language variant."
+    ),
+)
+def replace_cloud_api_template(
+    integration_id: uuid.UUID,
+    data: WhatsAppCloudApiTemplateCreate,
+    session: SessionDep,
+    current_user: CurrentUser,
+    previous_name: str = Query(
+        min_length=1,
+        max_length=512,
+        description="Name of the template being replaced.",
+    ),
+    previous_hsm_id: str | None = Query(
+        default=None,
+        description="Meta template ID (HSM) of the variant being replaced.",
+    ),
+) -> WhatsAppCloudApiTemplateResponse:
+    return service.replace_cloud_api_template(
+        session=session,
+        integration_id=integration_id,
+        current_user=current_user,
+        previous_name=previous_name,
+        previous_hsm_id=previous_hsm_id,
+        data=data,
+    )
+
+
 @webhook_router.get(
     "/webhooks/meta",
     response_class=PlainTextResponse,

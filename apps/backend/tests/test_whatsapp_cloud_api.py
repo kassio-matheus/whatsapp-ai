@@ -2,6 +2,8 @@ import hashlib
 import hmac
 import json
 import uuid
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 from fastapi import HTTPException
@@ -22,6 +24,7 @@ from app.modules.whatsapp.models import (
     MessageStatus,
     WhatsAppCloudApiCreate,
     WhatsAppCloudApiCredentials,
+    WhatsAppCloudApiTemplateCreate,
     WhatsAppContactCreate,
     WhatsAppConversation,
     WhatsAppIntegration,
@@ -465,6 +468,97 @@ def test_delete_cloud_api_template_calls_meta_and_validates(monkeypatch, databas
             "name": "appointment_reminder",
             "hsm_id": "template-1",
         }
+
+
+def test_replace_cloud_api_template_deletes_then_creates(monkeypatch, database) -> None:
+    calls: dict[str, str] = {}
+
+    class FakeMetaClient:
+        def __init__(self, credentials) -> None:
+            self.credentials = credentials
+
+        def delete_message_template(
+            self, *, name: str, hsm_id: str | None = None
+        ) -> bool:
+            calls["deleted_name"] = name
+            calls["deleted_hsm_id"] = hsm_id or ""
+            return True
+
+        def create_message_template(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+            calls["created_name"] = str(payload["name"])
+            calls["created_category"] = str(payload["category"])
+            return {"id": "template-2", "status": "PENDING", "category": "UTILITY"}
+
+    monkeypatch.setattr(service, "MetaCloudApiClient", FakeMetaClient)
+
+    with Session(database) as session:
+        user, company = _company(session)
+        integration = WhatsAppIntegration(
+            company_id=company.id,
+            name="Meta Cloud",
+            integration_type=IntegrationType.OFFICIAL.value,
+            adapter="whatsapp_cloud",
+            credentials_json=_credentials().model_dump(),
+            config_json={"coexistence": False},
+        )
+        session.add(integration)
+        session.commit()
+        session.refresh(integration)
+
+        data = WhatsAppCloudApiTemplateCreate(
+            name="appointment_reminder_v2",
+            language="pt_BR",
+            category="utility",
+            components=[
+                {"type": "BODY", "text": "Olá {{1}}, confirmamos seu horário."}
+            ],
+        )
+
+        result = service.replace_cloud_api_template(
+            session=session,
+            integration_id=integration.id,
+            current_user=user,
+            previous_name="appointment_reminder",
+            previous_hsm_id="template-1",
+            data=data,
+        )
+
+        assert calls["deleted_name"] == "appointment_reminder"
+        assert calls["deleted_hsm_id"] == "template-1"
+        assert calls["created_name"] == "appointment_reminder_v2"
+        assert calls["created_category"] == "UTILITY"
+        assert result.id == "template-2"
+        assert result.name == "appointment_reminder_v2"
+        assert result.status == "PENDING"
+
+
+def test_replace_cloud_api_template_requires_cloud_integration(database) -> None:
+    with Session(database) as session:
+        user, company = _company(session)
+        integration = WhatsAppIntegration(
+            company_id=company.id,
+            name="Unofficial",
+            integration_type=IntegrationType.UNOFFICIAL.value,
+            adapter="test-unofficial",
+        )
+        session.add(integration)
+        session.commit()
+        session.refresh(integration)
+
+        with pytest.raises(HTTPException) as exc:
+            service.replace_cloud_api_template(
+                session=session,
+                integration_id=integration.id,
+                current_user=user,
+                previous_name="any",
+                data=WhatsAppCloudApiTemplateCreate(
+                    name="other",
+                    language="pt_BR",
+                    category="UTILITY",
+                    components=[{"type": "BODY", "text": "Hello"}],
+                ),
+            )
+        assert exc.value.status_code == 422
 
 
 def test_delete_cloud_api_template_requires_cloud_integration(database) -> None:

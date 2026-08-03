@@ -78,25 +78,24 @@ def _recent_context(
     ]
 
 
-def schedule(message_id: uuid.UUID) -> bool:
+def schedule(session: Session, message_id: uuid.UUID) -> bool:
     """Cheap pre-check, then hand the work to the background executor."""
-    with Session(engine) as session:
-        message = session.get(WhatsAppMessage, message_id)
-        if message is None or not message.is_active:
-            return False
-        conversation = session.get(WhatsAppConversation, message.conversation_id)
-        if conversation is None or not conversation.is_active:
-            return False
-        integration = session.get(WhatsAppIntegration, conversation.integration_id)
-        if integration is None:
-            return False
-        if not should_auto_reply(
-            session=session,
-            message=message,
-            conversation=conversation,
-            integration=integration,
-        ):
-            return False
+    message = session.get(WhatsAppMessage, message_id)
+    if message is None or not message.is_active:
+        return False
+    conversation = session.get(WhatsAppConversation, message.conversation_id)
+    if conversation is None or not conversation.is_active:
+        return False
+    integration = session.get(WhatsAppIntegration, conversation.integration_id)
+    if integration is None:
+        return False
+    if not should_auto_reply(
+        session=session,
+        message=message,
+        conversation=conversation,
+        integration=integration,
+    ):
+        return False
     _EXECUTOR.submit(process, message_id)
     return True
 

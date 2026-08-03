@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import {
+  Bot,
   LayoutTemplate,
   MessagesSquare,
   Smartphone,
@@ -15,7 +16,12 @@ function WhatsAppSectionTabs({
   active,
 }: {
   companyId: string
-  active: "instances" | "contacts" | "conversations" | "templates"
+  active:
+    | "instances"
+    | "contacts"
+    | "conversations"
+    | "templates"
+    | "ai"
 }) {
   const tabs = [
     {
@@ -41,6 +47,12 @@ function WhatsAppSectionTabs({
       label: "Templates",
       href: `/companies/${companyId}/whatsapp/templates`,
       icon: LayoutTemplate,
+    },
+    {
+      key: "ai" as const,
+      label: "AI Assistant",
+      href: `/companies/${companyId}/whatsapp/ai`,
+      icon: Bot,
     },
   ]
 

@@ -179,6 +179,36 @@ export type WhatsAppAiResult = {
   response: string
 }
 
+export type WhatsAppAISettings = {
+  company_id: string
+  enabled: boolean
+  system_prompt: string | null
+  trusted_phone_numbers: string[]
+  allowed_contact_tools: string[]
+  reply_cooldown_seconds: number
+  updated_at: string
+}
+
+export type ConversationAISettings = {
+  conversation_id: string
+  enabled: boolean | null
+  system_prompt: string | null
+}
+
+export type McpToolInfo = {
+  name: string
+  method: string
+  path: string
+  summary: string | null
+  description: string
+  requires_auth: boolean
+}
+
+export type McpToolsPage = {
+  tools: McpToolInfo[]
+  allowed: string[]
+}
+
 export type WhatsAppMediaUpload = {
   key: string
   url: string
@@ -515,6 +545,20 @@ export const api = {
       { method: "POST", body: JSON.stringify({ prompt }) },
       token
     )
+  },
+
+  uploadSessionFile(sessionId: string, file: File, token: string) {
+    const form = new FormData()
+    form.append("file", file)
+    return request<{ message: string }>(
+      `/ai/sessions/${sessionId}/files`,
+      { method: "POST", body: form },
+      token
+    )
+  },
+
+  sessionFileUrl(sessionId: string, fileId: string) {
+    return `${API_BASE}/ai/sessions/${sessionId}/files/${fileId}`
   },
 
   // --- WhatsApp ---
@@ -867,12 +911,89 @@ export const api = {
     )
   },
 
+  updateCloudApiTemplate(
+    instanceId: string,
+    previousName: string,
+    data: {
+      name: string
+      language: string
+      category: string
+      components: Record<string, unknown>[]
+      allow_category_change?: boolean
+    },
+    token: string,
+    opts: { previous_hsm_id?: string } = {}
+  ) {
+    return request<WhatsAppCloudApiTemplate>(
+      `/whatsapp/instances/${instanceId}/cloud-api/templates${buildQuery({ previous_name: previousName, previous_hsm_id: opts.previous_hsm_id })}`,
+      { method: "PUT", body: JSON.stringify(data) },
+      token
+    )
+  },
+
   uploadWhatsAppMedia(file: File, token: string) {
     const form = new FormData()
     form.append("file", file)
     return request<WhatsAppMediaUpload>(
       "/whatsapp/media/upload",
       { method: "POST", body: form },
+      token
+    )
+  },
+
+  getCompanyAISettings(companyId: string, token: string) {
+    return request<WhatsAppAISettings>(
+      `/whatsapp/companies/${companyId}/ai/settings`,
+      {},
+      token
+    )
+  },
+
+  updateCompanyAISettings(
+    companyId: string,
+    data: {
+      enabled?: boolean
+      system_prompt?: string | null
+      trusted_phone_numbers?: string[]
+      allowed_contact_tools?: string[]
+      reply_cooldown_seconds?: number
+    },
+    token: string
+  ) {
+    return request<WhatsAppAISettings>(
+      `/whatsapp/companies/${companyId}/ai/settings`,
+      { method: "PUT", body: JSON.stringify(data) },
+      token
+    )
+  },
+
+  listCompanyAIMcpTools(companyId: string, token: string) {
+    return request<McpToolsPage>(
+      `/whatsapp/companies/${companyId}/ai/mcp-tools`,
+      {},
+      token
+    )
+  },
+
+  getConversationAISettings(conversationId: string, token: string) {
+    return request<ConversationAISettings>(
+      `/whatsapp/conversations/${conversationId}/ai/settings`,
+      {},
+      token
+    )
+  },
+
+  updateConversationAISettings(
+    conversationId: string,
+    data: {
+      enabled?: boolean | null
+      system_prompt?: string | null
+    },
+    token: string
+  ) {
+    return request<ConversationAISettings>(
+      `/whatsapp/conversations/${conversationId}/ai/settings`,
+      { method: "PUT", body: JSON.stringify(data) },
       token
     )
   },

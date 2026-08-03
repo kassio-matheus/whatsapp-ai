@@ -10,7 +10,6 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.core import security
-from app.core.db import engine
 from app.modules.companies.models import Company
 from app.modules.whatsapp.models import (
     INTERNAL_MESSAGE_TYPES,
@@ -235,7 +234,7 @@ def should_auto_reply(
     )
 
 
-def trigger_auto_reply(message_id: uuid.UUID) -> bool:
+def trigger_auto_reply(session: Session, message_id: uuid.UUID) -> bool:
     """Schedule the AI to answer an inbound message in the background.
 
     Returns ``True`` when a reply was scheduled. The full eligibility check
@@ -243,25 +242,24 @@ def trigger_auto_reply(message_id: uuid.UUID) -> bool:
     """
     from . import responder
 
-    return responder.schedule(message_id)
+    return responder.schedule(session=session, message_id=message_id)
 
 
-def process_inbound_message(message_id: uuid.UUID) -> None:
+def process_inbound_message(session: Session, message_id: uuid.UUID) -> None:
     """Public entry point used by the WhatsApp module after persisting a message."""
-    with Session(engine) as session:
-        message = session.get(WhatsAppMessage, message_id)
-        if message is None or not message.is_active:
-            return
-        conversation = session.get(WhatsAppConversation, message.conversation_id)
-        if conversation is None or not conversation.is_active:
-            return
-        integration = session.get(WhatsAppIntegration, conversation.integration_id)
-        if integration is None:
-            return
-        if should_auto_reply(
-            session=session,
-            message=message,
-            conversation=conversation,
-            integration=integration,
-        ):
-            trigger_auto_reply(message_id)
+    message = session.get(WhatsAppMessage, message_id)
+    if message is None or not message.is_active:
+        return
+    conversation = session.get(WhatsAppConversation, message.conversation_id)
+    if conversation is None or not conversation.is_active:
+        return
+    integration = session.get(WhatsAppIntegration, conversation.integration_id)
+    if integration is None:
+        return
+    if should_auto_reply(
+        session=session,
+        message=message,
+        conversation=conversation,
+        integration=integration,
+    ):
+        trigger_auto_reply(session=session, message_id=message_id)

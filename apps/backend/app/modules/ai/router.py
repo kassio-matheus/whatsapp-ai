@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, File, Query, UploadFile
+from fastapi import APIRouter, File, Query, Response, UploadFile
 from sqlmodel import Field, SQLModel
 
 from app.modules.ai import service
@@ -254,3 +254,33 @@ def upload_file(
         file=file,
     )
     return Message(message="File uploaded")
+
+
+@router.get(
+    "/sessions/{session_id}/files/{file_id}",
+    response_class=Response,
+    summary="Download a session file",
+    description=(
+        "Stream a file uploaded to a chat session. Files are served from "
+        "Cloudflare R2 when configured, otherwise from local storage."
+    ),
+)
+def download_file(
+    session_id: uuid.UUID,
+    file_id: uuid.UUID,
+    current_user: CurrentUser,
+) -> Response:
+    body, mime_type, filename = service.download_file(
+        session_id=session_id,
+        user_id=current_user.id,
+        file_id=file_id,
+    )
+    headers = {
+        "Cache-Control": "private, max-age=3600",
+        "Content-Disposition": f'inline; filename="{filename}"',
+    }
+    return Response(
+        content=body,
+        media_type=mime_type or "application/octet-stream",
+        headers=headers,
+    )

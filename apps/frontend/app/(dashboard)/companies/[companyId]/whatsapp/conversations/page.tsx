@@ -13,6 +13,7 @@ import {
   Pencil,
   Plus,
   Radio,
+  RotateCcw,
   StickyNote,
   Trash2,
 } from "lucide-react"
@@ -28,6 +29,7 @@ import {
 } from "@workspace/ui/components/dropdown-menu"
 import { ScrollArea } from "@workspace/ui/components/scroll-area"
 import { Skeleton } from "@workspace/ui/components/skeleton"
+import { Switch } from "@workspace/ui/components/switch"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { useApp } from "@/components/app-provider"
@@ -44,6 +46,7 @@ import {
   api,
   ApiClientError,
   subscribeToWhatsAppEvents,
+  type ConversationAISettings,
   type ConversationStatus,
   type WhatsAppContact,
   type WhatsAppCloudApiTemplate,
@@ -110,6 +113,12 @@ export default function ConversationsPage() {
     null
   )
   const [aiPending, setAiPending] = React.useState(false)
+  const [companyAiEnabled, setCompanyAiEnabled] = React.useState<boolean | null>(
+    null
+  )
+  const [conversationAi, setConversationAi] =
+    React.useState<ConversationAISettings | null>(null)
+  const [aiSettingsLoading, setAiSettingsLoading] = React.useState(false)
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editingConversation, setEditingConversation] =
     React.useState<WhatsAppConversation | null>(null)
@@ -185,6 +194,50 @@ export default function ConversationsPage() {
   React.useEffect(() => {
     void loadConversations(true)
   }, [loadConversations])
+
+  React.useEffect(() => {
+    if (!token) {
+      setCompanyAiEnabled(null)
+      return
+    }
+    let cancelled = false
+    void api
+      .getCompanyAISettings(companyId, token)
+      .then((result) => {
+        if (!cancelled) {
+          setCompanyAiEnabled(result.enabled)
+        }
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [companyId, token])
+
+  React.useEffect(() => {
+    if (!token || !selectedId) {
+      setConversationAi(null)
+      return
+    }
+    let cancelled = false
+    setAiSettingsLoading(true)
+    void api
+      .getConversationAISettings(selectedId, token)
+      .then((result) => {
+        if (!cancelled) {
+          setConversationAi(result)
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) {
+          setAiSettingsLoading(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedId, token])
 
   React.useEffect(() => {
     void loadMessages(selectedId, true)
@@ -301,6 +354,52 @@ export default function ConversationsPage() {
       void loadConversations()
     } finally {
       setAiPending(false)
+    }
+  }
+
+  async function handleToggleConversationAi(enabled: boolean) {
+    if (!token || !selectedId) {
+      return
+    }
+    setAiSettingsLoading(true)
+    try {
+      const updated = await api.updateConversationAISettings(
+        selectedId,
+        { enabled },
+        token
+      )
+      setConversationAi(updated)
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError
+          ? err.message
+          : "Could not update the conversation AI setting."
+      )
+    } finally {
+      setAiSettingsLoading(false)
+    }
+  }
+
+  async function handleResetConversationAi() {
+    if (!token || !selectedId) {
+      return
+    }
+    setAiSettingsLoading(true)
+    try {
+      const updated = await api.updateConversationAISettings(
+        selectedId,
+        { enabled: null },
+        token
+      )
+      setConversationAi(updated)
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError
+          ? err.message
+          : "Could not reset the conversation AI setting."
+      )
+    } finally {
+      setAiSettingsLoading(false)
     }
   }
 
@@ -483,7 +582,39 @@ export default function ConversationsPage() {
                     </span>
                     <StatusBadge status={selected.status} />
                   </div>
-                  <DropdownMenu>
+                  <div className="flex items-center gap-2">
+                    <label
+                      title={
+                        conversationAi?.enabled === null
+                          ? "Following the company default"
+                          : "Customized for this conversation"
+                      }
+                      className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
+                    >
+                      <Bot className="size-3" />
+                      <Switch
+                        checked={
+                          conversationAi?.enabled ?? companyAiEnabled ?? false
+                        }
+                        disabled={
+                          aiSettingsLoading || companyAiEnabled === null
+                        }
+                        onCheckedChange={(checked) =>
+                          void handleToggleConversationAi(checked)
+                        }
+                      />
+                    </label>
+                    {conversationAi?.enabled !== null ? (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="Reset to company default"
+                        onClick={() => void handleResetConversationAi()}
+                      >
+                        <RotateCcw />
+                      </Button>
+                    ) : null}
+                    <DropdownMenu>
                     <DropdownMenuTrigger
                       render={
                         <Button variant="ghost" size="icon-sm">
@@ -509,8 +640,9 @@ export default function ConversationsPage() {
                         Delete
                       </DropdownMenuItem>
                     </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+                      </DropdownMenu>
+                    </div>
+                  </div>
 
                 <ScrollArea className="flex-1">
                   <div className="flex flex-col gap-2 p-3">

@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.db import engine
+from app.core.r2 import R2Error, r2
 from app.modules.ai.llm.openai_llm import OpenAI
 from app.modules.ai.models import ChatFile, ChatSession, Message
 
@@ -138,12 +139,23 @@ def delete_session(*, session_id: uuid.UUID, user_id: uuid.UUID) -> None:
         db = session.get(ChatSession, session_id)
         if not db or db.user_id != user_id:
             raise HTTPException(status_code=404, detail="Session not found")
+        file_rows = session.exec(
+            select(ChatFile).where(ChatFile.session_id == db.id)
+        ).all()
         db.is_active = False
         session.add(db)
         session.commit()
-        file_dir = os.path.join(settings.UPLOAD_DIR, str(session_id))
-        if os.path.isdir(file_dir):
-            shutil.rmtree(file_dir)
+
+    if r2.configured:
+        for row in file_rows:
+            try:
+                r2.delete_object(key=row.filepath)
+            except R2Error:
+                continue
+
+    file_dir = os.path.join(settings.UPLOAD_DIR, str(session_id))
+    if os.path.isdir(file_dir):
+        shutil.rmtree(file_dir)
 
 
 def list_sessions(
@@ -264,25 +276,46 @@ def upload_file(
     if extension not in _ALLOWED_UPLOADS[mime_type]:
         raise HTTPException(status_code=415, detail="File extension does not match type")
 
-    base_dir = Path(settings.UPLOAD_DIR).resolve()
-    file_dir = base_dir / str(session_id)
-    file_dir.mkdir(parents=True, exist_ok=True)
-
     file_id = uuid.uuid4()
-    saved_name = f"{file_id}{extension}"
-    filepath = file_dir / saved_name
 
     size = 0
+    chunk_buffer = bytearray()
     try:
-        with filepath.open("wb") as output:
-            while chunk := file.file.read(64 * 1024):
-                size += len(chunk)
-                if size > settings.MAX_UPLOAD_BYTES:
-                    raise HTTPException(status_code=413, detail="File is too large")
-                output.write(chunk)
-    except HTTPException:
-        filepath.unlink(missing_ok=True)
-        raise
+        while chunk := file.file.read(64 * 1024):
+            size += len(chunk)
+            if size > settings.MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="File is too large")
+            chunk_buffer.extend(chunk)
+    finally:
+        file.file.close()
+
+    if r2.configured:
+        key = _file_key(
+            user_id=user_id,
+            session_id=db.id,
+            file_id=file_id,
+            extension=extension,
+        )
+        try:
+            r2.put_object(
+                key=key,
+                data=bytes(chunk_buffer),
+                content_type=mime_type,
+            )
+        except R2Error as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not store the file: {exc}",
+            ) from exc
+        stored_ref = key
+    else:
+        base_dir = Path(settings.UPLOAD_DIR).resolve()
+        file_dir = base_dir / str(session_id)
+        file_dir.mkdir(parents=True, exist_ok=True)
+        saved_name = f"{file_id}{extension}"
+        filepath = file_dir / saved_name
+        filepath.write_bytes(bytes(chunk_buffer))
+        stored_ref = str(filepath)
 
     with Session(engine) as session:
         chat_file = ChatFile(
@@ -290,7 +323,7 @@ def upload_file(
             session_id=db.id,
             user_id=user_id,
             filename=filename,
-            filepath=str(filepath),
+            filepath=stored_ref,
             mime_type=mime_type,
             size_bytes=size,
         )
@@ -298,6 +331,38 @@ def upload_file(
         session.commit()
         session.refresh(chat_file)
         return chat_file
+
+
+def _file_key(
+    *, user_id: uuid.UUID, session_id: uuid.UUID, file_id: uuid.UUID, extension: str
+) -> str:
+    return f"ai/{user_id}/{session_id}/{file_id}{extension}"
+
+
+def download_file(
+    *, session_id: uuid.UUID, user_id: uuid.UUID, file_id: uuid.UUID
+) -> tuple[bytes, str, str]:
+    db = get_session(session_id=session_id, user_id=user_id)
+    with Session(engine) as session:
+        chat_file = session.get(ChatFile, file_id)
+        if not chat_file or chat_file.session_id != db.id or chat_file.user_id != user_id:
+            raise HTTPException(status_code=404, detail="File not found")
+        reference = chat_file.filepath
+
+    if r2.configured:
+        try:
+            body, _ = r2.get_object(key=reference)
+        except R2Error as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not read the file: {exc}",
+            ) from exc
+        return body, chat_file.mime_type, chat_file.filename
+
+    path = Path(reference)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    return path.read_bytes(), chat_file.mime_type, chat_file.filename
 
 
 def get_session_files(*, session_id: uuid.UUID, user_id: uuid.UUID) -> list[ChatFile]:

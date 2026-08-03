@@ -13,6 +13,7 @@ import {
   LoaderCircle,
   Megaphone,
   MoreHorizontal,
+  Pencil,
   Plus,
   Radio,
   RefreshCw,
@@ -196,6 +197,9 @@ export default function TemplatesPage() {
   const [query, setQuery] = React.useState("")
   const [status, setStatus] = React.useState("all")
   const [createOpen, setCreateOpen] = React.useState(false)
+  const [editing, setEditing] = React.useState<WhatsAppCloudApiTemplate | null>(
+    null
+  )
   const [deleting, setDeleting] = React.useState<WhatsAppCloudApiTemplate | null>(
     null
   )
@@ -353,7 +357,10 @@ export default function TemplatesPage() {
           </Button>
           <Button
             size="sm"
-            onClick={() => setCreateOpen(true)}
+            onClick={() => {
+              setEditing(null)
+              setCreateOpen(true)
+            }}
             disabled={!instanceId}
           >
             <Plus /> New template
@@ -557,6 +564,15 @@ export default function TemplatesPage() {
                                 Copy name
                               </DropdownMenuItem>
                               <DropdownMenuItem
+                                onClick={() => {
+                                  setEditing(template)
+                                  setCreateOpen(true)
+                                }}
+                              >
+                                <Pencil />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
                                 variant="destructive"
                                 onClick={() => setDeleting(template)}
                               >
@@ -626,12 +642,18 @@ export default function TemplatesPage() {
       )}
 
       {selectedInstance ? (
-        <CreateTemplateDialog
+        <TemplateDialog
           open={createOpen}
-          onOpenChange={setCreateOpen}
+          onOpenChange={(open) => {
+            setCreateOpen(open)
+            if (!open) {
+              setEditing(null)
+            }
+          }}
           instance={selectedInstance}
           token={token}
-          onCreated={() => void loadTemplates()}
+          template={editing}
+          onSaved={() => void loadTemplates()}
         />
       ) : null}
 
@@ -662,18 +684,83 @@ type ButtonDraft = {
   url: string
 }
 
-function CreateTemplateDialog({
+function componentsToForm(template: WhatsAppCloudApiTemplate): {
+  name: string
+  language: string
+  category: string
+  header: string
+  body: string
+  footer: string
+  buttons: ButtonDraft[]
+  mediaHeader: Record<string, unknown> | null
+} {
+  let header = ""
+  let body = ""
+  let footer = ""
+  const buttons: ButtonDraft[] = []
+  let mediaHeader: Record<string, unknown> | null = null
+  for (const component of template.components) {
+    const type = String(component.type ?? "").toUpperCase()
+    if (type === "HEADER") {
+      const format = String(component.format ?? "TEXT").toUpperCase()
+      if (["IMAGE", "VIDEO", "DOCUMENT"].includes(format)) {
+        mediaHeader = component
+      } else {
+        header = typeof component.text === "string" ? component.text : ""
+      }
+    } else if (type === "BODY") {
+      body = typeof component.text === "string" ? component.text : ""
+    } else if (type === "FOOTER") {
+      footer = typeof component.text === "string" ? component.text : ""
+    } else if (type === "BUTTONS" && Array.isArray(component.buttons)) {
+      for (const button of component.buttons) {
+        if (!button || typeof button !== "object") {
+          continue
+        }
+        const record = button as Record<string, unknown>
+        const kind = String(record.type ?? "").toUpperCase()
+        buttons.push(
+          kind === "URL"
+            ? {
+                type: "URL",
+                text: typeof record.text === "string" ? record.text : "",
+                url: typeof record.url === "string" ? record.url : "",
+              }
+            : {
+                type: "QUICK_REPLY",
+                text: typeof record.text === "string" ? record.text : "",
+                url: "",
+              }
+        )
+      }
+    }
+  }
+  return {
+    name: template.name,
+    language: template.language,
+    category: template.category ?? "UTILITY",
+    header,
+    body,
+    footer,
+    buttons,
+    mediaHeader,
+  }
+}
+
+function TemplateDialog({
   open,
   onOpenChange,
   instance,
   token,
-  onCreated,
+  template,
+  onSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   instance: WhatsAppIntegration
   token: string | null
-  onCreated: () => void
+  template: WhatsAppCloudApiTemplate | null
+  onSaved: () => void
 }) {
   const [name, setName] = React.useState("")
   const [language, setLanguage] = React.useState("pt_BR")
@@ -682,14 +769,40 @@ function CreateTemplateDialog({
   const [body, setBody] = React.useState("")
   const [footer, setFooter] = React.useState("")
   const [buttons, setButtons] = React.useState<ButtonDraft[]>([])
+  const [preservedHeader, setPreservedHeader] = React.useState<
+    Record<string, unknown> | null
+  >(null)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
+  const editing = template !== null
+
   React.useEffect(() => {
-    if (open) {
-      setError(null)
+    if (!open) {
+      return
     }
-  }, [open])
+    setError(null)
+    if (template) {
+      const form = componentsToForm(template)
+      setName(form.name)
+      setLanguage(form.language)
+      setCategory(form.category)
+      setHeader(form.header)
+      setBody(form.body)
+      setFooter(form.footer)
+      setButtons(form.buttons)
+      setPreservedHeader(form.mediaHeader)
+    } else {
+      setName("")
+      setLanguage("pt_BR")
+      setCategory("UTILITY")
+      setHeader("")
+      setBody("")
+      setFooter("")
+      setButtons([])
+      setPreservedHeader(null)
+    }
+  }, [open, template])
 
   const bodyVariableCount = [...body.matchAll(/{{\s*(\d+)\s*}}/g)].length
 
@@ -720,7 +833,9 @@ function CreateTemplateDialog({
       .replace(/[^a-z0-9_]/g, "_")
 
     const components: Record<string, unknown>[] = []
-    if (header.trim()) {
+    if (preservedHeader) {
+      components.push(preservedHeader)
+    } else if (header.trim()) {
       components.push({ type: "HEADER", format: "TEXT", text: header.trim() })
     }
     components.push({
@@ -758,31 +873,42 @@ function CreateTemplateDialog({
       })
     }
 
+    const payload = {
+      name: normalizedName,
+      language,
+      category,
+      components,
+    }
+
     setPending(true)
     setError(null)
     try {
-      await api.createCloudApiTemplate(
-        instance.id,
-        {
-          name: normalizedName,
-          language,
-          category,
-          components,
-        },
-        token
-      )
+      if (editing && template) {
+        await api.updateCloudApiTemplate(
+          instance.id,
+          template.name,
+          payload,
+          token,
+          template.id ? { previous_hsm_id: template.id } : {}
+        )
+      } else {
+        await api.createCloudApiTemplate(instance.id, payload, token)
+      }
       onOpenChange(false)
       setName("")
       setHeader("")
       setBody("")
       setFooter("")
       setButtons([])
-      onCreated()
+      setPreservedHeader(null)
+      onSaved()
     } catch (err) {
       setError(
         err instanceof ApiClientError
           ? err.message
-          : "Could not submit the template to Meta."
+          : editing
+            ? "Could not save the template changes to Meta."
+            : "Could not submit the template to Meta."
       )
     } finally {
       setPending(false)
@@ -793,11 +919,24 @@ function CreateTemplateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] max-w-xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create a message template</DialogTitle>
+          <DialogTitle>
+            {editing ? "Edit a message template" : "Create a message template"}
+          </DialogTitle>
           <DialogDescription>
-            Build a Meta-compliant template for review. Use numbered variables
-            like <code>{"{{1}}"}</code> for personalized values. Meta enforces
-            its own content policy before approval.
+            {editing ? (
+              <>
+                Meta templates are immutable, so saving sends the changes as a
+                new template for review and removes the previous one from the
+                catalog. Use numbered variables like <code>{"{{1}}"}</code> for
+                personalized values.
+              </>
+            ) : (
+              <>
+                Build a Meta-compliant template for review. Use numbered
+                variables like <code>{"{{1}}"}</code> for personalized values.
+                Meta enforces its own content policy before approval.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={(event) => void submit(event)} className="grid gap-3">
@@ -857,17 +996,27 @@ function CreateTemplateDialog({
           </div>
           <div className="grid gap-1">
             <Label htmlFor="template-header">Header (optional)</Label>
-            <Input
-              id="template-header"
-              value={header}
-              onChange={(event) => setHeader(event.target.value)}
-              placeholder="Obrigado por escolher nossa empresa"
-              maxLength={60}
-            />
-            <p className="text-[10px] text-muted-foreground">
-              Up to 60 characters of text. Media headers are not supported in
-              this builder.
-            </p>
+            {preservedHeader ? (
+              <div className="flex items-center gap-2 border border-primary/20 bg-primary/[0.04] px-2.5 py-1.5 text-[10px] text-muted-foreground">
+                <FileText className="size-3 shrink-0" />
+                Media header preserved as-is — this builder edits text content
+                only.
+              </div>
+            ) : (
+              <>
+                <Input
+                  id="template-header"
+                  value={header}
+                  onChange={(event) => setHeader(event.target.value)}
+                  placeholder="Obrigado por escolher nossa empresa"
+                  maxLength={60}
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Up to 60 characters of text. Media headers are not supported
+                  in this builder.
+                </p>
+              </>
+            )}
           </div>
           <div className="grid gap-1">
             <Label htmlFor="template-body">Body</Label>
@@ -979,7 +1128,7 @@ function CreateTemplateDialog({
               disabled={pending || !name.trim() || !body.trim()}
             >
               {pending ? <LoaderCircle className="animate-spin" /> : <Send />}
-              Submit to Meta
+              {editing ? "Save changes" : "Submit to Meta"}
             </Button>
           </DialogFooter>
         </form>

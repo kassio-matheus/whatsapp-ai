@@ -1,6 +1,7 @@
 import datetime
 import hmac
 import json
+import logging
 import re
 import uuid
 from pathlib import Path
@@ -16,6 +17,8 @@ from app.core.config import settings
 from app.core.r2 import R2Error, R2Object, r2
 from app.modules.auth.models import User
 from app.modules.companies.models import Company
+
+logger = logging.getLogger(__name__)
 
 from .adapters import whatsapp_adapter_registry
 from .cloud_api import (
@@ -637,6 +640,61 @@ def delete_cloud_api_template(
         company_id=integration.company_id,
         event_type="template.deleted",
         instance_id=integration.id,
+    )
+
+
+def replace_cloud_api_template(
+    *,
+    session: Session,
+    integration_id: uuid.UUID,
+    current_user: User,
+    previous_name: str,
+    previous_hsm_id: str | None = None,
+    data: WhatsAppCloudApiTemplateCreate,
+) -> WhatsAppCloudApiTemplateResponse:
+    """Replace a live Meta template with an edited copy.
+
+    Meta's template contract is immutable, so an edit cannot update the
+    existing template in place. Editing deletes the current template and
+    submits the edited payload as a new one for review. The previous name is
+    required to remove the old catalog entry; ``previous_hsm_id`` restricts
+    the delete to the single language variant being edited.
+    """
+
+    integration = _cloud_template_integration(
+        session=session, integration_id=integration_id, current_user=current_user
+    )
+    try:
+        deleted = MetaCloudApiClient(
+            _cloud_credentials(integration)
+        ).delete_message_template(name=previous_name, hsm_id=previous_hsm_id)
+        if not deleted:
+            raise HTTPException(
+                status_code=502,
+                detail="Meta did not confirm the previous template deletion",
+            )
+        payload = data.model_dump()
+        payload["language"] = payload["language"].replace("-", "_")
+        payload["category"] = payload["category"].upper()
+        response = MetaCloudApiClient(
+            _cloud_credentials(integration)
+        ).create_message_template(payload)
+    except MetaCloudApiError as exc:
+        raise _cloud_error(exc) from exc
+    whatsapp_event_broker.publish(
+        company_id=integration.company_id,
+        event_type="template.updated",
+        instance_id=integration.id,
+    )
+    return WhatsAppCloudApiTemplateResponse(
+        id=str(response.get("id") or ""),
+        name=data.name,
+        language=payload["language"],
+        status=str(response.get("status") or "PENDING"),
+        category=str(response.get("category") or payload["category"]),
+        components=data.components,
+        quality_score=None,
+        rejected_reason=None,
     )
 
 
@@ -2093,8 +2151,12 @@ def process_meta_webhook(
         for message_id in inbound_message_ids:
             # Imported lazily so the WhatsApp module does not depend on the AI
             # module at import time. The responder re-validates eligibility and
-            # acts only when the company and conversation allow it.
-            from app.modules.ai_whatsapp.service import process_inbound_message
+            # acts only when the company and conversation allow it. Scheduling
+            # is best-effort: a failure here must never break webhook ingestion.
+            try:
+                from app.modules.ai_whatsapp.service import process_inbound_message
 
-            process_inbound_message(message_id)
+                process_inbound_message(session=session, message_id=message_id)
+            except Exception:
+                logger.exception("Failed to schedule AI auto-reply for %s", message_id)
     return {"received": True, "processed": processed}
