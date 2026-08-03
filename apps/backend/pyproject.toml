@@ -13,6 +13,7 @@ dependencies = [
     "emails>=1.1.2",
     "fastapi[standard]>=0.141.1",
     "fastmcp>=3.4.5",
+    "google-genai>=2.16.0",
     "openai>=2.11.0",
     "opencode-ai>=0.1.0a36",
     "psycopg[binary]>=3.3.4",

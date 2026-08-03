@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     ALLOWED_HOSTS: list[str] = [""]
     OPENAI_API_KEY: str = ""
+    DEEPSEEK_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
     SECRET_KEY: str = Field(min_length=32)
     SQLALCHEMY_DATABASE_URI: str = Field(min_length=1)
 

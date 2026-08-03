@@ -12,6 +12,9 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.db import engine
 from app.core.r2 import R2Error, r2
+from app.modules.ai.llm.deepseek_llm import DeepSeek
+from app.modules.ai.llm.failover import FailoverLLM
+from app.modules.ai.llm.gemini_llm import Gemini
 from app.modules.ai.llm.openai_llm import OpenAI
 from app.modules.ai.models import ChatFile, ChatSession, Message
 
@@ -24,7 +27,19 @@ _ALLOWED_UPLOADS = {
     "text/plain": {".txt"},
 }
 
-llm = OpenAI(api_key=settings.OPENAI_API_KEY)
+def _llm_providers() -> list[object]:
+    """Build the provider chain in failover order (DeepSeek, ChatGPT, Gemini)."""
+    providers = []
+    if settings.DEEPSEEK_API_KEY:
+        providers.append(DeepSeek(api_key=settings.DEEPSEEK_API_KEY))
+    if settings.OPENAI_API_KEY:
+        providers.append(OpenAI(api_key=settings.OPENAI_API_KEY))
+    if settings.GEMINI_API_KEY:
+        providers.append(Gemini(api_key=settings.GEMINI_API_KEY))
+    return providers
+
+
+llm = FailoverLLM(providers=_llm_providers())
 
 
 def _expires_at() -> datetime.datetime:
