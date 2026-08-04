@@ -88,14 +88,20 @@ export default function AISettingsPage() {
 
   const [settings, setSettings] = React.useState<AIGlobalSettings | null>(null)
   const [selectedProvider, setSelectedProvider] = React.useState<LLMProvider | null>(null)
-  const [reasoning, setReasoning] = React.useState<ReasoningLevel>("medium")
-  const [supportsThinking, setSupportsThinking] = React.useState(true)
   const [providerModels, setProviderModels] = React.useState<
     Record<LLMProvider, string>
   >({ deepseek: "", openai: "", gemini: "", groq: "" })
   const [providerKeys, setProviderKeys] = React.useState<
     Record<LLMProvider, string>
   >({ deepseek: "", openai: "", gemini: "", groq: "" })
+  const [providerThinking, setProviderThinking] = React.useState<
+    Record<LLMProvider, { supportsThinking: boolean; reasoning: ReasoningLevel }>
+  >({
+    deepseek: { supportsThinking: true, reasoning: "medium" },
+    openai: { supportsThinking: true, reasoning: "medium" },
+    gemini: { supportsThinking: true, reasoning: "medium" },
+    groq: { supportsThinking: true, reasoning: "medium" },
+  })
 
   const load = React.useCallback(
     async (showLoader = false) => {
@@ -109,8 +115,6 @@ export default function AISettingsPage() {
         const result = await api.getAIGlobalSettings(token)
         setSettings(result)
         setSelectedProvider(result.selected_provider)
-        setReasoning(result.reasoning_effort)
-        setSupportsThinking(result.supports_thinking)
         setProviderModels(
           LLM_PROVIDERS.reduce(
             (acc, provider) => {
@@ -120,6 +124,24 @@ export default function AISettingsPage() {
               return acc
             },
             { deepseek: "", openai: "", gemini: "", groq: "" } as Record<LLMProvider, string>,
+          ),
+        )
+        setProviderThinking(
+          LLM_PROVIDERS.reduce(
+            (acc, provider) => {
+              acc[provider.value] = {
+                supportsThinking:
+                  result.providers[provider.value].supports_thinking,
+                reasoning: result.providers[provider.value].reasoning_effort,
+              }
+              return acc
+            },
+            {
+              deepseek: { supportsThinking: true, reasoning: "medium" },
+              openai: { supportsThinking: true, reasoning: "medium" },
+              gemini: { supportsThinking: true, reasoning: "medium" },
+              groq: { supportsThinking: true, reasoning: "medium" },
+            } as Record<LLMProvider, { supportsThinking: boolean; reasoning: ReasoningLevel }>,
           ),
         )
         setProviderKeys({ deepseek: "", openai: "", gemini: "", groq: "" })
@@ -152,8 +174,6 @@ export default function AISettingsPage() {
       const result = await api.updateAIGlobalSettings(
         {
           selected_provider: selectedProvider,
-          reasoning_effort: reasoning,
-          supports_thinking: supportsThinking,
           deepseek_model: providerModels.deepseek.trim() || "deepseek-v4-flash",
           openai_model: providerModels.openai.trim() || "gpt-5.6-luna",
           gemini_model: providerModels.gemini.trim() || "gemini-3.5-flash-lite",
@@ -162,13 +182,37 @@ export default function AISettingsPage() {
           openai_api_key: providerKeys.openai.trim() || null,
           gemini_api_key: providerKeys.gemini.trim() || null,
           groq_api_key: providerKeys.groq.trim() || null,
+          deepseek_reasoning_effort: providerThinking.deepseek.reasoning,
+          openai_reasoning_effort: providerThinking.openai.reasoning,
+          gemini_reasoning_effort: providerThinking.gemini.reasoning,
+          groq_reasoning_effort: providerThinking.groq.reasoning,
+          deepseek_supports_thinking: providerThinking.deepseek.supportsThinking,
+          openai_supports_thinking: providerThinking.openai.supportsThinking,
+          gemini_supports_thinking: providerThinking.gemini.supportsThinking,
+          groq_supports_thinking: providerThinking.groq.supportsThinking,
         },
         token,
       )
       setSettings(result)
       setSelectedProvider(result.selected_provider)
-      setReasoning(result.reasoning_effort)
-      setSupportsThinking(result.supports_thinking)
+      setProviderThinking(
+        LLM_PROVIDERS.reduce(
+          (acc, provider) => {
+            acc[provider.value] = {
+              supportsThinking:
+                result.providers[provider.value].supports_thinking,
+              reasoning: result.providers[provider.value].reasoning_effort,
+            }
+            return acc
+          },
+          {
+            deepseek: { supportsThinking: true, reasoning: "medium" },
+            openai: { supportsThinking: true, reasoning: "medium" },
+            gemini: { supportsThinking: true, reasoning: "medium" },
+            groq: { supportsThinking: true, reasoning: "medium" },
+          } as Record<LLMProvider, { supportsThinking: boolean; reasoning: ReasoningLevel }>,
+        ),
+      )
       setProviderKeys({ deepseek: "", openai: "", gemini: "", groq: "" })
     } catch (err) {
       setError(
@@ -314,70 +358,85 @@ export default function AISettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
-              {LLM_PROVIDERS.map((provider) => (
-                <div key={provider.value} className="flex flex-col gap-1.5">
-                  <Label htmlFor={`model-${provider.value}`}>
-                    <span className="inline-flex items-center gap-1.5">
-                      <LLMLogo provider={provider.value} className="size-3.5" />
-                      {provider.label} model
-                    </span>
-                  </Label>
-                  <Input
-                    id={`model-${provider.value}`}
-                    value={providerModels[provider.value]}
-                    onChange={(event) =>
-                      setProviderModels((previous) => ({
-                        ...previous,
-                        [provider.value]: event.target.value,
-                      }))
-                    }
-                    placeholder={provider.defaultModel}
-                    className="font-mono"
-                  />
-                </div>
-              ))}
-
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="reasoning-level">Thinking power</Label>
-                <Select
-                  items={REASONING_LEVELS.map((level) => ({
-                    value: level.value,
-                    label: level.label,
-                  }))}
-                  value={reasoning}
-                  onValueChange={(value) =>
-                    setReasoning(value as ReasoningLevel)
-                  }
-                  disabled={!supportsThinking}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {REASONING_LEVELS.map((level) => (
-                      <SelectItem key={level.value} value={level.value}>
-                        {level.label} — {level.description}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-center justify-between gap-3 border-t pt-4">
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs font-medium">
-                    Models support thinking
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">
-                    Turn off when the selected models reject reasoning
-                    parameters. This removes thinking from all requests.
-                  </span>
-                </div>
-                <Switch
-                  checked={supportsThinking}
-                  onCheckedChange={setSupportsThinking}
-                />
-              </div>
+              {LLM_PROVIDERS.map((provider) => {
+                const thinking = providerThinking[provider.value]
+                return (
+                  <div
+                    key={provider.value}
+                    className="flex flex-col gap-3 border-t pt-4 first:border-t-0 first:pt-0"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium">
+                        <LLMLogo provider={provider.value} className="size-3.5" />
+                        {provider.label}
+                      </span>
+                      <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
+                        Supports thinking
+                        <Switch
+                          checked={thinking.supportsThinking}
+                          onCheckedChange={(checked) =>
+                            setProviderThinking((previous) => ({
+                              ...previous,
+                              [provider.value]: {
+                                ...previous[provider.value],
+                                supportsThinking: checked,
+                              },
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor={`model-${provider.value}`}>Model</Label>
+                      <Input
+                        id={`model-${provider.value}`}
+                        value={providerModels[provider.value]}
+                        onChange={(event) =>
+                          setProviderModels((previous) => ({
+                            ...previous,
+                            [provider.value]: event.target.value,
+                          }))
+                        }
+                        placeholder={provider.defaultModel}
+                        className="font-mono"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor={`reasoning-${provider.value}`}>
+                        Thinking power
+                      </Label>
+                      <Select
+                        items={REASONING_LEVELS.map((level) => ({
+                          value: level.value,
+                          label: level.label,
+                        }))}
+                        value={thinking.reasoning}
+                        onValueChange={(value) =>
+                          setProviderThinking((previous) => ({
+                            ...previous,
+                            [provider.value]: {
+                              ...previous[provider.value],
+                              reasoning: value as ReasoningLevel,
+                            },
+                          }))
+                        }
+                        disabled={!thinking.supportsThinking}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {REASONING_LEVELS.map((level) => (
+                            <SelectItem key={level.value} value={level.value}>
+                              {level.label} — {level.description}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )
+              })}
             </CardContent>
           </Card>
 

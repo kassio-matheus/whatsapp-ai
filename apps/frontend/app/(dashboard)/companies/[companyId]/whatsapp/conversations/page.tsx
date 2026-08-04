@@ -130,6 +130,55 @@ export default function ConversationsPage() {
   const [deletingMessage, setDeletingMessage] =
     React.useState<WhatsAppMessage | null>(null)
 
+  const messagesViewportRef = React.useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = React.useRef(true)
+
+  const handleMessagesViewportScroll = React.useCallback(() => {
+    const viewport = messagesViewportRef.current
+    if (!viewport) {
+      return
+    }
+    const distanceFromBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight
+    stickToBottomRef.current = distanceFromBottom < 80
+  }, [])
+
+  const setMessagesViewport = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      const previous = messagesViewportRef.current
+      if (previous) {
+        previous.removeEventListener(
+          "scroll",
+          handleMessagesViewportScroll
+        )
+      }
+      messagesViewportRef.current = node
+      if (node) {
+        node.addEventListener("scroll", handleMessagesViewportScroll, {
+          passive: true,
+        })
+      }
+    },
+    [handleMessagesViewportScroll]
+  )
+
+  const scrollMessagesToBottom = React.useCallback(() => {
+    const viewport = messagesViewportRef.current
+    if (viewport) {
+      viewport.scrollTop = viewport.scrollHeight
+    }
+  }, [])
+
+  React.useEffect(() => {
+    if (stickToBottomRef.current) {
+      scrollMessagesToBottom()
+    }
+  }, [messages, scrollMessagesToBottom])
+
+  React.useEffect(() => {
+    stickToBottomRef.current = true
+  }, [selectedId])
+
   const selected =
     conversations.find((conversation) => conversation.id === selectedId) ?? null
 
@@ -155,6 +204,12 @@ export default function ConversationsPage() {
         setSelectedId((previous) => {
           if (previous && conversationsResult.some((c) => c.id === previous)) {
             return previous
+          }
+          const target = new URLSearchParams(window.location.search).get(
+            "conversation"
+          )
+          if (target && conversationsResult.some((c) => c.id === target)) {
+            return target
           }
           return conversationsResult[0]?.id ?? null
         })
@@ -198,7 +253,7 @@ export default function ConversationsPage() {
 
   React.useEffect(() => {
     if (!token) {
-      setCompanyAiEnabled(null)
+      setCompanyAiEnabled(false)
       return
     }
     let cancelled = false
@@ -646,7 +701,10 @@ export default function ConversationsPage() {
                     </div>
                   </div>
 
-                <ScrollArea className="flex-1">
+                <ScrollArea
+                  viewportRef={setMessagesViewport}
+                  className="min-h-0 flex-1"
+                >
                   <div className="flex flex-col gap-2 p-3">
                     {messagesLoading ? (
                       <div className="flex justify-center py-8 text-muted-foreground">

@@ -60,6 +60,7 @@ import { Skeleton } from "@workspace/ui/components/skeleton"
 import { cn } from "@workspace/ui/lib/utils"
 
 import { useApp } from "@/components/app-provider"
+import { NotificationBell } from "@/components/notification-bell"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { getInitials } from "@/lib/format"
 import { WhatsAppIcon } from "@/components/ui/whatsapp-icon"
@@ -108,7 +109,7 @@ const AI_SUB_NAV: NavItem[] = [
   {
     title: "AI Chat",
     icon: Bot,
-    buildHref: () => "/ai",
+    buildHref: () => "/ai/chat",
   },
   {
     title: "AI Settings",
@@ -492,6 +493,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
             </span>
           </div>
           <div className="ms-auto" />
+          <NotificationBell />
           <ThemeToggle />
           <Badge variant="outline" className="text-[10px]">
             {user.is_super_admin ? "Super admin" : "Member"}

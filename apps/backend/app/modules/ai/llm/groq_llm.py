@@ -9,8 +9,15 @@ from rich.syntax import Syntax
 
 from app.core.logging import console
 
-from ..mcp import mcp_session, get_tools
+from ..mcp import (
+    ToolSet,
+    build_tool_catalog,
+    get_tools,
+    mcp_session,
+    selection_query_from_items,
+)
 from ..models import AIPlatform, ChatResponseStructure
+from .common import parse_chat_response
 
 #: A Groq expõe uma Responses API compatível com a da OpenAI (em beta) neste
 #: base_url, então reaproveitamos o SDK oficial `openai` em vez do pacote
@@ -39,6 +46,20 @@ SCOPED_TOOL_GUIDANCE = (
     "Only a limited subset of the backend tools is enabled for this session. "
     "Never try to call a tool that is not listed above, and do not ask the user "
     "for credentials or for actions that require unavailable tools."
+)
+
+#: Instructs the model to answer with the structured JSON envelope that
+#: ``ChatResponseStructure`` expects. Only included when the request carries no
+#: tools, since the instruction is what keeps Groq's ``json_object`` output
+#: format valid (Groq requires the word "json" to appear in the conversation).
+#: It explicitly forbids tool calls so a small model does not try to invoke a
+#: nonexistent "json" function.
+JSON_RESPONSE_GUIDANCE = (
+    "Do not call any tool for this reply. Instead, write a single plain-text "
+    "JSON object as your entire answer, with no markdown fences and no text "
+    "before or after it, using exactly this shape: "
+    '{"response": "your message to the user"}. '
+    "The \"response\" value must be a plain string with your message."
 )
 
 MAX_REMOTE_CALLS = 10
@@ -81,6 +102,9 @@ class Groq(AIPlatform):
         parts = [TOOL_GUIDANCE]
         if allowed_tools is not None:
             parts.append(SCOPED_TOOL_GUIDANCE)
+        catalog = build_tool_catalog(allowed_tools=allowed_tools)
+        if catalog:
+            parts.append(catalog)
         if system_prompt:
             parts.append(system_prompt)
         instruction = "\n\n".join(parts)
@@ -116,7 +140,7 @@ class Groq(AIPlatform):
 
     @staticmethod
     def _parse_response(response: Any) -> ChatResponseStructure:
-        return ChatResponseStructure.model_validate_json(response.output_text or "{}")
+        return parse_chat_response(response.output_text or "")
 
     @staticmethod
     def _response_schema() -> dict[str, Any]:
@@ -132,10 +156,21 @@ class Groq(AIPlatform):
         tool_definitions: list[dict[str, Any]],
     ) -> dict[str, Any]:
 
+        if tool_definitions:
+            effective_instruction = instruction
+        else:
+            # Without tools the model must still produce the structured JSON
+            # envelope, and Groq's json_object format requires the word "json"
+            # to be present in the conversation.
+            effective_instruction = (
+                (instruction + "\n\n" if instruction else "")
+                + JSON_RESPONSE_GUIDANCE
+            )
+
         kwargs: dict[str, Any] = {
             "model": self.model,
             "input": cast(Any, input_items),
-            "instructions": instruction,
+            "instructions": effective_instruction,
         }
 
         if tool_definitions:
@@ -168,16 +203,14 @@ class Groq(AIPlatform):
             ):
                 mcp_tools = await get_tools(session)
 
-                if allowed_tools is not None:
-                    allowed_names = set(allowed_tools)
-                    mcp_tools = [
-                        tool for tool in mcp_tools if tool.name in allowed_names]
-                    allowed_tool_names = allowed_names
-                else:
-                    allowed_tool_names = {
-                        tool.name for tool in mcp_tools}
-                tool_definitions = [self._to_openai_tool(
-                    tool) for tool in mcp_tools]
+                toolset = ToolSet(
+                    tools_by_name={tool.name: tool for tool in mcp_tools},
+                    query=selection_query_from_items(input_items),
+                    allowed_tools=allowed_tools,
+                )
+                tool_definitions = [
+                    self._to_openai_tool(tool) for tool in toolset.tools()
+                ]
 
                 failed_calls: dict[tuple[str, str],
                                    dict[str, object]] = {}
@@ -204,7 +237,7 @@ class Groq(AIPlatform):
                         serialized: dict[str, object]
                         is_error = False
 
-                        if name not in allowed_tool_names:
+                        if not toolset.available(name):
                             serialized = {
                                 "error": "Tool is not available"}
                             console.print(
@@ -216,6 +249,11 @@ class Groq(AIPlatform):
                                 f"[yellow]>>> TOOL (cached error, skipped): {name}[/]"
                             )
                         else:
+                            if toolset.ensure(name):
+                                tool_definitions = [
+                                    self._to_openai_tool(tool)
+                                    for tool in toolset.tools()
+                                ]
                             console.print(
                                 f"[bold magenta]>>> TOOL: {name}[/]")
                             try:

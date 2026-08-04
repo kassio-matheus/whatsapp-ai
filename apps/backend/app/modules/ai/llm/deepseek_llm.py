@@ -15,7 +15,13 @@ from rich.syntax import Syntax
 
 from app.core.logging import console
 
-from ..mcp import mcp_session, get_tools
+from ..mcp import (
+    ToolSet,
+    build_tool_catalog,
+    get_tools,
+    mcp_session,
+    selection_query_from_items,
+)
 from ..models import AIPlatform, ChatResponseStructure
 from .common import parse_chat_response
 from .openai_llm import (
@@ -66,6 +72,9 @@ class DeepSeek(AIPlatform):
         parts = [TOOL_GUIDANCE]
         if allowed_tools is not None:
             parts.append(SCOPED_TOOL_GUIDANCE)
+        catalog = build_tool_catalog(allowed_tools=allowed_tools)
+        if catalog:
+            parts.append(catalog)
         if system_prompt:
             parts.append(system_prompt)
         instruction = "\n\n".join(parts)
@@ -143,15 +152,13 @@ class DeepSeek(AIPlatform):
             mcp_session(auth_token=auth_token) as session,
         ):
             mcp_tools = await get_tools(session)
-            if allowed_tools is not None:
-                allowed_names = set(allowed_tools)
-                mcp_tools = [
-                    tool for tool in mcp_tools if tool.name in allowed_names]
-                allowed_tool_names = allowed_names
-            else:
-                allowed_tool_names = {tool.name for tool in mcp_tools}
+            toolset = ToolSet(
+                tools_by_name={tool.name: tool for tool in mcp_tools},
+                query=selection_query_from_items(input_items),
+                allowed_tools=allowed_tools,
+            )
             tool_definitions = [
-                self._to_chat_completion_tool(tool) for tool in mcp_tools
+                self._to_chat_completion_tool(tool) for tool in toolset.tools()
             ]
 
             failed_calls: dict[tuple[str, str], dict[str, object]] = {}
@@ -201,7 +208,7 @@ class DeepSeek(AIPlatform):
                     serialized: dict[str, object]
                     is_error = False
 
-                    if name not in allowed_tool_names:
+                    if not toolset.available(name):
                         serialized = {"error": "Tool is not available"}
                         console.print(
                             f"[yellow]>>> TOOL (unavailable, skipped): {name}[/]"
@@ -212,6 +219,11 @@ class DeepSeek(AIPlatform):
                             f"[yellow]>>> TOOL (cached error, skipped): {name}[/]"
                         )
                     else:
+                        if toolset.ensure(name):
+                            tool_definitions = [
+                                self._to_chat_completion_tool(tool)
+                                for tool in toolset.tools()
+                            ]
                         console.print(f"[bold magenta]>>> TOOL: {name}[/]")
                         try:
                             args = json.loads(arguments or "{}")

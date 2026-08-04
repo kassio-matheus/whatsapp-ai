@@ -24,9 +24,8 @@ from app.core.config import settings
 from app.modules.ai.llm.deepseek_llm import DeepSeek
 from app.modules.ai.llm.failover import FailoverLLM
 from app.modules.ai.llm.gemini_llm import Gemini
-from app.modules.ai.llm.openai_llm import OpenAI
 from app.modules.ai.llm.groq_llm import Groq
-
+from app.modules.ai.llm.openai_llm import OpenAI
 from app.modules.ai.models import (
     AIGlobalSettings,
     AIGlobalSettingsResponse,
@@ -74,6 +73,20 @@ _PROVIDER_MODEL_ATTR = {
     LLMProvider.OPENAI: "openai_model",
     LLMProvider.GEMINI: "gemini_model",
     LLMProvider.GROQ: "groq_model",
+}
+
+_PROVIDER_REASONING_ATTR = {
+    LLMProvider.DEEPSEEK: "deepseek_reasoning_effort",
+    LLMProvider.OPENAI: "openai_reasoning_effort",
+    LLMProvider.GEMINI: "gemini_reasoning_effort",
+    LLMProvider.GROQ: "groq_reasoning_effort",
+}
+
+_PROVIDER_THINKING_ATTR = {
+    LLMProvider.DEEPSEEK: "deepseek_supports_thinking",
+    LLMProvider.OPENAI: "openai_supports_thinking",
+    LLMProvider.GEMINI: "gemini_supports_thinking",
+    LLMProvider.GROQ: "groq_supports_thinking",
 }
 
 _ENV_KEY_ATTR = {
@@ -124,16 +137,6 @@ def _selected_provider(row: object | None) -> LLMProvider | None:
         return None
 
 
-def _reasoning(row: object | None) -> ReasoningLevel:
-    value = getattr(row, "reasoning_effort", None) if row is not None else None
-    if not value:
-        return ReasoningLevel.MEDIUM
-    try:
-        return ReasoningLevel(value)
-    except ValueError:
-        return ReasoningLevel.MEDIUM
-
-
 def _provider_reasoning(
     provider: LLMProvider, level: ReasoningLevel
 ) -> str:
@@ -154,10 +157,32 @@ def _provider_reasoning(
     return level.value
 
 
-def _supports_thinking(row: object | None) -> bool:
-    value = getattr(row, "supports_thinking",
-                    None) if row is not None else None
-    return bool(value) if value is not None else True
+def _reasoning_by_provider(
+    row: object | None,
+) -> dict[LLMProvider, ReasoningLevel]:
+    """Per-provider thinking power, falling back to ``MEDIUM``."""
+    levels: dict[LLMProvider, ReasoningLevel] = {}
+    for provider in PROVIDER_ORDER:
+        value = getattr(row, _PROVIDER_REASONING_ATTR[provider],
+                        None) if row is not None else None
+        try:
+            levels[provider] = ReasoningLevel(value) if value \
+                else ReasoningLevel.MEDIUM
+        except ValueError:
+            levels[provider] = ReasoningLevel.MEDIUM
+    return levels
+
+
+def _supports_thinking_by_provider(
+    row: object | None,
+) -> dict[LLMProvider, bool]:
+    """Per-provider thinking toggle, defaulting to ``True``."""
+    flags: dict[LLMProvider, bool] = {}
+    for provider in PROVIDER_ORDER:
+        value = getattr(row, _PROVIDER_THINKING_ATTR[provider],
+                        None) if row is not None else None
+        flags[provider] = bool(value) if value is not None else True
+    return flags
 
 
 def _stored_keys(row: object | None) -> dict[LLMProvider, str]:
@@ -200,8 +225,8 @@ def _chain_from_row(
         keys=keys,
         models=_stored_models(row),
         selected=_selected_provider(row),
-        reasoning=_reasoning(row),
-        supports_thinking=_supports_thinking(row),
+        reasoning=_reasoning_by_provider(row),
+        supports_thinking=_supports_thinking_by_provider(row),
     )
 
 
@@ -210,12 +235,14 @@ def _chain_from_keys(
     keys: dict[LLMProvider, str],
     models: dict[LLMProvider, str] | None = None,
     selected: LLMProvider | None = None,
-    reasoning: ReasoningLevel = ReasoningLevel.MEDIUM,
-    supports_thinking: bool = True,
+    reasoning: dict[LLMProvider, ReasoningLevel] | None = None,
+    supports_thinking: dict[LLMProvider, bool] | None = None,
 ) -> list[AIPlatform]:
     ordered = [selected] if selected is not None else []
     ordered += [p for p in PROVIDER_ORDER if p != selected]
     models = models or {}
+    reasoning = reasoning or {}
+    supports_thinking = supports_thinking or {}
     providers: list[AIPlatform] = []
     for provider in ordered:
         api_key = keys.get(provider)
@@ -223,14 +250,18 @@ def _chain_from_keys(
             continue
         model = models.get(provider, PROVIDER_MODELS[provider])
         cls = _CLASS_BY_PROVIDER[provider]
-        provider_reasoning = _provider_reasoning(provider, reasoning)
+        provider_reasoning = _provider_reasoning(
+            provider,
+            reasoning.get(provider, ReasoningLevel.MEDIUM),
+        )
+        provider_thinking = supports_thinking.get(provider, True)
         if provider == LLMProvider.GEMINI:
             providers.append(
                 cls(
                     api_key=api_key,
                     model=model,
                     thinking_level=provider_reasoning,
-                    supports_thinking=supports_thinking,
+                    supports_thinking=provider_thinking,
                 )
             )
         else:
@@ -239,7 +270,7 @@ def _chain_from_keys(
                     api_key=api_key,
                     model=model,
                     reasoning=provider_reasoning,
-                    supports_thinking=supports_thinking,
+                    supports_thinking=provider_thinking,
                 )
             )
     return providers
@@ -291,10 +322,23 @@ def update_global_settings(
                 _PROVIDER_MODEL_ATTR[provider],
                 model.strip() or None,
             )
-    if data.reasoning_effort is not None:
-        row.reasoning_effort = data.reasoning_effort.value
-    if data.supports_thinking is not None:
-        row.supports_thinking = data.supports_thinking
+    for provider in PROVIDER_ORDER:
+        reasoning_field = f"{provider.value}_reasoning_effort"
+        reasoning_value = getattr(data, reasoning_field, None)
+        if reasoning_value is not None:
+            setattr(
+                row,
+                _PROVIDER_REASONING_ATTR[provider],
+                reasoning_value.value,
+            )
+        thinking_field = f"{provider.value}_supports_thinking"
+        thinking_value = getattr(data, thinking_field, None)
+        if thinking_value is not None:
+            setattr(
+                row,
+                _PROVIDER_THINKING_ATTR[provider],
+                thinking_value,
+            )
     row.updated_at = datetime.now(UTC).replace(tzinfo=None)
     session.add(row)
     session.commit()
@@ -314,12 +358,12 @@ def global_settings_response(*, row: AIGlobalSettings) -> AIGlobalSettingsRespon
         providers[provider.value] = LLMProviderConfig(
             configured=configured,
             model=model,
+            supports_thinking=_supports_thinking_by_provider(row)[provider],
+            reasoning_effort=_reasoning_by_provider(row)[provider],
         )
     return AIGlobalSettingsResponse(
         selected_provider=_selected_provider(row),
         providers=providers,
-        reasoning_effort=_reasoning(row),
-        supports_thinking=_supports_thinking(row),
     )
 
 
@@ -377,10 +421,23 @@ def update_company_llm_settings(
                 _PROVIDER_MODEL_ATTR[provider],
                 model.strip() or None,
             )
-    if data.reasoning_effort is not None:
-        row.reasoning_effort = data.reasoning_effort.value
-    if data.supports_thinking is not None:
-        row.supports_thinking = data.supports_thinking
+    for provider in PROVIDER_ORDER:
+        reasoning_field = f"{provider.value}_reasoning_effort"
+        reasoning_value = getattr(data, reasoning_field, None)
+        if reasoning_value is not None:
+            setattr(
+                row,
+                _PROVIDER_REASONING_ATTR[provider],
+                reasoning_value.value,
+            )
+        thinking_field = f"{provider.value}_supports_thinking"
+        thinking_value = getattr(data, thinking_field, None)
+        if thinking_value is not None:
+            setattr(
+                row,
+                _PROVIDER_THINKING_ATTR[provider],
+                thinking_value,
+            )
     row.updated_at = datetime.now(UTC).replace(tzinfo=None)
     session.add(row)
     session.commit()
@@ -404,16 +461,26 @@ def company_settings_response(
             if row is not None
             else PROVIDER_MODELS[provider]
         )
+        supports_thinking = (
+            _supports_thinking_by_provider(row)[provider]
+            if row is not None
+            else True
+        )
+        reasoning_effort = (
+            _reasoning_by_provider(row)[provider]
+            if row is not None
+            else ReasoningLevel.MEDIUM
+        )
         providers[provider.value] = LLMProviderConfig(
             configured=configured,
             model=model,
+            supports_thinking=supports_thinking,
+            reasoning_effort=reasoning_effort,
         )
     return CompanyLLMSettingsResponse(
         company_id=company_id,
         selected_provider=_selected_provider(row),
         providers=providers,
-        reasoning_effort=_reasoning(row),
-        supports_thinking=_supports_thinking(row),
     )
 
 

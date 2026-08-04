@@ -5,6 +5,7 @@ from app.modules.ai_whatsapp.router import router as ai_whatsapp_router
 from app.modules.auth.router import router as auth_router
 from app.modules.companies.router import router as companies_router
 from app.modules.health.router import router as health_router
+from app.modules.notifications.router import router as notifications_router
 from app.modules.whatsapp.router import (
     router as whatsapp_router,
 )
@@ -48,6 +49,12 @@ api_router.include_router(
     whatsapp_webhook_router,
     prefix="/whatsapp",
     tags=["WhatsApp Webhooks"]
+)
+api_router.include_router(
+    notifications_router,
+    prefix="/notifications",
+    tags=["Notifications"],
+    dependencies=[Depends(require_auth)],
 )
 api_router.include_router(
     health_router,

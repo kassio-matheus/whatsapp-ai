@@ -195,20 +195,20 @@ export type ConversationAISettings = {
   system_prompt: string | null
 }
 
-export type LLMProvider = "deepseek" | "openai"  | "gemini" | "groq"
+export type LLMProvider = "deepseek" | "openai" | "gemini" | "groq"
 
 export type ReasoningLevel = "minimal" | "low" | "medium" | "high"
 
 export type LLMProviderConfig = {
   configured: boolean
   model: string | null
+  supports_thinking: boolean
+  reasoning_effort: ReasoningLevel
 }
 
 export type LLMSettings = {
   selected_provider: LLMProvider | null
   providers: Record<LLMProvider, LLMProviderConfig>
-  reasoning_effort: ReasoningLevel
-  supports_thinking: boolean
 }
 
 export type AIGlobalSettings = LLMSettings
@@ -227,8 +227,14 @@ export type AIGlobalSettingsUpdate = {
   openai_model?: string | null
   gemini_model?: string | null
   groq_model?: string | null
-  reasoning_effort?: ReasoningLevel | null
-  supports_thinking?: boolean | null
+  deepseek_reasoning_effort?: ReasoningLevel | null
+  openai_reasoning_effort?: ReasoningLevel | null
+  gemini_reasoning_effort?: ReasoningLevel | null
+  groq_reasoning_effort?: ReasoningLevel | null
+  deepseek_supports_thinking?: boolean | null
+  openai_supports_thinking?: boolean | null
+  gemini_supports_thinking?: boolean | null
+  groq_supports_thinking?: boolean | null
 }
 
 export type McpToolInfo = {
@@ -262,6 +268,27 @@ export type WhatsAppRealtimeEvent = {
   occurred_at: string
 }
 
+export type NotificationItem = {
+  id: string
+  type: string
+  title: string
+  body: string | null
+  conversation_id: string | null
+  integration_id: string | null
+  message_id: string | null
+  is_read: boolean
+  created_at: string
+}
+
+export type NotificationListResponse = {
+  items: NotificationItem[]
+  unread_count: number
+}
+
+export type UnreadCountResponse = {
+  unread_count: number
+}
+
 export type ApiError = {
   detail: unknown
 }
@@ -291,7 +318,9 @@ function formatApiError(detail: unknown): string {
           ? error.loc.map((part) => String(part)).join(".")
           : ""
         const message =
-          typeof error.msg === "string" && error.msg ? error.msg : "Invalid value"
+          typeof error.msg === "string" && error.msg
+            ? error.msg
+            : "Invalid value"
         return location ? `${location}: ${message}` : message
       })
       .filter(Boolean)
@@ -1098,5 +1127,51 @@ export const api = {
 
   health() {
     return request<{ status: string }>("/health")
+  },
+
+  // --- Notifications ---
+  listNotifications(
+    token: string,
+    options: {
+      companyId?: string
+      unreadOnly?: boolean
+      limit?: number
+      offset?: number
+    } = {}
+  ) {
+    return request<NotificationListResponse>(
+      `/notifications${buildQuery({
+        company_id: options.companyId,
+        unread_only: options.unreadOnly ? "true" : undefined,
+        limit: options.limit,
+        offset: options.offset,
+      })}`,
+      {},
+      token
+    )
+  },
+
+  unreadNotificationsCount(token: string, companyId?: string) {
+    return request<UnreadCountResponse>(
+      `/notifications/unread-count${buildQuery({ company_id: companyId })}`,
+      {},
+      token
+    )
+  },
+
+  markNotificationRead(notificationId: string, token: string, companyId?: string) {
+    return request<NotificationItem>(
+      `/notifications/${notificationId}/read${buildQuery({ company_id: companyId })}`,
+      { method: "PATCH" },
+      token
+    )
+  },
+
+  markAllNotificationsRead(token: string, companyId?: string) {
+    return request<{ success: boolean }>(
+      `/notifications/read-all${buildQuery({ company_id: companyId })}`,
+      { method: "POST" },
+      token
+    )
   },
 }

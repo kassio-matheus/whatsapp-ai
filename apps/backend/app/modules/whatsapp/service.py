@@ -2149,6 +2149,19 @@ def process_meta_webhook(
                     instance_id=integration.id,
                 )
     if inbound_message_ids:
+        # Surface in-app notifications for the new inbound messages. Best-effort:
+        # a failure here must never break webhook ingestion.
+        try:
+            from app.modules.notifications.service import (
+                create_message_notifications,
+            )
+
+            create_message_notifications(
+                session=session,
+                message_ids=inbound_message_ids,
+            )
+        except Exception:
+            logger.exception("Failed to create notifications for inbound messages")
         for message_id in inbound_message_ids:
             # Imported lazily so the WhatsApp module does not depend on the AI
             # module at import time. The responder re-validates eligibility and

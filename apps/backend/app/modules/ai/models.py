@@ -40,8 +40,14 @@ class CompanyLLMSettings(SQLModel, table=True):
     openai_model: str | None = SQLField(default=None, max_length=256)
     gemini_model: str | None = SQLField(default=None, max_length=256)
     groq_model: str | None = SQLField(default=None, max_length=256)
-    reasoning_effort: str | None = SQLField(default=None, max_length=32)
-    supports_thinking: bool = SQLField(default=True)
+    deepseek_reasoning_effort: str | None = SQLField(default=None, max_length=32)
+    openai_reasoning_effort: str | None = SQLField(default=None, max_length=32)
+    gemini_reasoning_effort: str | None = SQLField(default=None, max_length=32)
+    groq_reasoning_effort: str | None = SQLField(default=None, max_length=32)
+    deepseek_supports_thinking: bool = SQLField(default=True)
+    openai_supports_thinking: bool = SQLField(default=True)
+    gemini_supports_thinking: bool = SQLField(default=True)
+    groq_supports_thinking: bool = SQLField(default=True)
     created_at: datetime = SQLField(default_factory=datetime.now)
     updated_at: datetime = SQLField(
         default_factory=datetime.now, nullable=True)
@@ -66,8 +72,14 @@ class AIGlobalSettings(SQLModel, table=True):
     openai_model: str | None = SQLField(default=None, max_length=256)
     gemini_model: str | None = SQLField(default=None, max_length=256)
     groq_model: str | None = SQLField(default=None, max_length=256)
-    reasoning_effort: str | None = SQLField(default=None, max_length=32)
-    supports_thinking: bool = SQLField(default=True)
+    deepseek_reasoning_effort: str | None = SQLField(default=None, max_length=32)
+    openai_reasoning_effort: str | None = SQLField(default=None, max_length=32)
+    gemini_reasoning_effort: str | None = SQLField(default=None, max_length=32)
+    groq_reasoning_effort: str | None = SQLField(default=None, max_length=32)
+    deepseek_supports_thinking: bool = SQLField(default=True)
+    openai_supports_thinking: bool = SQLField(default=True)
+    gemini_supports_thinking: bool = SQLField(default=True)
+    groq_supports_thinking: bool = SQLField(default=True)
     updated_at: datetime = SQLField(
         default_factory=datetime.now, nullable=True)
 
@@ -81,6 +93,17 @@ class LLMProviderConfig(BaseModel):
     model: str | None = Field(
         default=None, description="Model identifier used when this provider runs."
     )
+    supports_thinking: bool = Field(
+        default=True,
+        description=(
+            "Whether this provider's model supports thinking/reasoning. When "
+            "false, no thinking parameters are sent to this provider."
+        ),
+    )
+    reasoning_effort: ReasoningLevel = Field(
+        default=ReasoningLevel.MEDIUM,
+        description="Thinking power applied when this provider runs.",
+    )
 
 
 class LLMSettingsResponse(BaseModel):
@@ -92,17 +115,6 @@ class LLMSettingsResponse(BaseModel):
     )
     providers: dict[str, LLMProviderConfig] = Field(
         description="Configuration status of every available provider."
-    )
-    reasoning_effort: ReasoningLevel = Field(
-        default=ReasoningLevel.MEDIUM,
-        description="Unified thinking power applied across providers.",
-    )
-    supports_thinking: bool = Field(
-        default=True,
-        description=(
-            "Whether the selected models support thinking/reasoning. When false, "
-            "no thinking parameters are sent to any provider."
-        ),
     )
 
 
@@ -166,16 +178,37 @@ class CompanyLLMSettingsUpdate(BaseModel):
         max_length=256,
         description="Groq model id. Empty string restores the default.",
     )
-    reasoning_effort: ReasoningLevel | None = Field(
+    deepseek_reasoning_effort: ReasoningLevel | None = Field(
         default=None,
-        description="Unified thinking power: `minimal`, `low`, `medium`, `high`.",
+        description="DeepSeek thinking power: `minimal`, `low`, `medium`, `high`.",
     )
-    supports_thinking: bool | None = Field(
+    openai_reasoning_effort: ReasoningLevel | None = Field(
         default=None,
-        description=(
-            "Whether the selected models support thinking/reasoning. "
-            "Set `false` for models that reject thinking parameters."
-        ),
+        description="OpenAI thinking power: `minimal`, `low`, `medium`, `high`.",
+    )
+    gemini_reasoning_effort: ReasoningLevel | None = Field(
+        default=None,
+        description="Gemini thinking power: `minimal`, `low`, `medium`, `high`.",
+    )
+    groq_reasoning_effort: ReasoningLevel | None = Field(
+        default=None,
+        description="Groq thinking power: `minimal`, `low`, `medium`, `high`.",
+    )
+    deepseek_supports_thinking: bool | None = Field(
+        default=None,
+        description="Whether the DeepSeek model supports thinking/reasoning.",
+    )
+    openai_supports_thinking: bool | None = Field(
+        default=None,
+        description="Whether the OpenAI model supports thinking/reasoning.",
+    )
+    gemini_supports_thinking: bool | None = Field(
+        default=None,
+        description="Whether the Gemini model supports thinking/reasoning.",
+    )
+    groq_supports_thinking: bool | None = Field(
+        default=None,
+        description="Whether the Groq model supports thinking/reasoning.",
     )
 
 
@@ -229,16 +262,37 @@ class AIGlobalSettingsUpdate(BaseModel):
         max_length=256,
         description="Groq model id. Empty string restores the default.",
     )
-    reasoning_effort: ReasoningLevel | None = Field(
+    deepseek_reasoning_effort: ReasoningLevel | None = Field(
         default=None,
-        description="Unified thinking power: `minimal`, `low`, `medium`, `high`.",
+        description="DeepSeek thinking power: `minimal`, `low`, `medium`, `high`.",
     )
-    supports_thinking: bool | None = Field(
+    openai_reasoning_effort: ReasoningLevel | None = Field(
         default=None,
-        description=(
-            "Whether the selected models support thinking/reasoning. "
-            "Set `false` for models that reject thinking parameters."
-        ),
+        description="OpenAI thinking power: `minimal`, `low`, `medium`, `high`.",
+    )
+    gemini_reasoning_effort: ReasoningLevel | None = Field(
+        default=None,
+        description="Gemini thinking power: `minimal`, `low`, `medium`, `high`.",
+    )
+    groq_reasoning_effort: ReasoningLevel | None = Field(
+        default=None,
+        description="Groq thinking power: `minimal`, `low`, `medium`, `high`.",
+    )
+    deepseek_supports_thinking: bool | None = Field(
+        default=None,
+        description="Whether the DeepSeek model supports thinking/reasoning.",
+    )
+    openai_supports_thinking: bool | None = Field(
+        default=None,
+        description="Whether the OpenAI model supports thinking/reasoning.",
+    )
+    gemini_supports_thinking: bool | None = Field(
+        default=None,
+        description="Whether the Gemini model supports thinking/reasoning.",
+    )
+    groq_supports_thinking: bool | None = Field(
+        default=None,
+        description="Whether the Groq model supports thinking/reasoning.",
     )
 
 

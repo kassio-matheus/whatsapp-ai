@@ -40,6 +40,19 @@ class Settings(BaseSettings):
     MAX_CHAT_PROMPT_LENGTH: int = 16_000
     MAX_SYSTEM_PROMPT_LENGTH: int = 8_000
 
+    # How many MCP tool *full schemas* are pre-loaded per request. The request
+    # is scored against a BM25 index and only the top matches are sent to the
+    # model, keeping the prompt small even with hundreds of routes exposed.
+    AI_TOOL_SELECTION_LIMIT: int = 8
+    # How many tool lines appear in the compact "available tools" catalog
+    # appended to the instructions. It lets the model know what exists without
+    # paying for every full JSON schema. Set to 0 to disable the catalog.
+    AI_TOOL_CATALOG_LIMIT: int = 100
+    # When the model calls a tool by name that was not pre-selected, load its
+    # definition on demand and run it. Disabling saves tokens but the model can
+    # then only use the pre-selected tools.
+    AI_TOOL_ON_DEMAND: bool = True
+
     # Cloudflare R2 (S3-compatible) object storage
     R2_BUCKET_NAME: str = ""
     R2_ACCESS_KEY_ID: str = Field(

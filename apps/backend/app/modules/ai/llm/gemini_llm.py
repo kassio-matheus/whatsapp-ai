@@ -17,7 +17,13 @@ from rich.syntax import Syntax
 
 from app.core.logging import console
 
-from ..mcp import mcp_session, get_tools
+from ..mcp import (
+    ToolSet,
+    build_tool_catalog,
+    get_tools,
+    mcp_session,
+    selection_query_from_items,
+)
 from ..models import AIPlatform, ChatResponseStructure
 from .common import parse_chat_response
 from .openai_llm import (
@@ -67,6 +73,9 @@ class Gemini(AIPlatform):
         parts = [TOOL_GUIDANCE]
         if allowed_tools is not None:
             parts.append(SCOPED_TOOL_GUIDANCE)
+        catalog = build_tool_catalog(allowed_tools=allowed_tools)
+        if catalog:
+            parts.append(catalog)
         if system_prompt:
             parts.append(system_prompt)
         instruction = "\n\n".join(parts)
@@ -163,34 +172,36 @@ class Gemini(AIPlatform):
 
         async with mcp_session(auth_token=auth_token) as session:
             mcp_tools = await get_tools(session)
-            if allowed_tools is not None:
-                allowed_names = set(allowed_tools)
-                mcp_tools = [
-                    tool for tool in mcp_tools if tool.name in allowed_names]
-                allowed_tool_names = allowed_names
-            else:
-                allowed_tool_names = {tool.name for tool in mcp_tools}
+            toolset = ToolSet(
+                tools_by_name={tool.name: tool for tool in mcp_tools},
+                query=selection_query_from_items(input_items),
+                allowed_tools=allowed_tools,
+            )
 
-            function_declarations = [
-                self._to_function_declaration(tool) for tool in mcp_tools
-            ]
-            config_kwargs: dict[str, Any] = {
+            base_config_kwargs: dict[str, Any] = {
                 "system_instruction": instruction or "",
-                "tools": (
-                    [types.Tool(function_declarations=function_declarations)]
-                    if function_declarations
-                    else None
-                ),
                 "response_mime_type": "application/json",
             }
             if self.supports_thinking:
-                config_kwargs["thinking_config"] = types.ThinkingConfig(
+                base_config_kwargs["thinking_config"] = types.ThinkingConfig(
                     thinking_level=self.thinking_level,
                 )
-            config = types.GenerateContentConfig(**config_kwargs)
+
+            def build_config() -> types.GenerateContentConfig:
+                declarations = [
+                    self._to_function_declaration(tool)
+                    for tool in toolset.tools()
+                ]
+                config_kwargs = dict(base_config_kwargs)
+                config_kwargs["tools"] = (
+                    [types.Tool(function_declarations=declarations)]
+                    if declarations
+                    else None
+                )
+                return types.GenerateContentConfig(**config_kwargs)
 
             no_tools_config = types.GenerateContentConfig(
-                **{**config_kwargs, "tools": None}
+                **base_config_kwargs
             )
 
             failed_calls: dict[tuple[str, str], dict[str, object]] = {}
@@ -199,12 +210,12 @@ class Gemini(AIPlatform):
 
             async def generate_content(
                 current_contents: list[types.Content],
-                current_config: types.GenerateContentConfig = config,
+                current_config: types.GenerateContentConfig | None = None,
             ) -> types.GenerateContentResponse:
                 return await client.aio.models.generate_content(
                     model=self.model,
                     contents=current_contents,
-                    config=current_config,
+                    config=current_config or build_config(),
                 )
 
             response = await generate_content(contents)
@@ -231,7 +242,7 @@ class Gemini(AIPlatform):
                     serialized: dict[str, object]
                     is_error = False
 
-                    if name not in allowed_tool_names:
+                    if not isinstance(name, str) or not toolset.available(name):
                         serialized = {"error": "Tool is not available"}
                         console.print(
                             f"[yellow]>>> TOOL (unavailable, skipped): {name}[/]"
@@ -242,6 +253,7 @@ class Gemini(AIPlatform):
                             f"[yellow]>>> TOOL (cached error, skipped): {name}[/]"
                         )
                     else:
+                        toolset.ensure(name)
                         console.print(f"[bold magenta]>>> TOOL: {name}[/]")
                         try:
                             if args:

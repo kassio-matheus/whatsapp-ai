@@ -14,6 +14,7 @@ from app.modules.ai_whatsapp.models import (  # noqa: F401
 )
 from app.modules.auth.models import User  # noqa: F401
 from app.modules.companies.models import Company  # noqa: F401
+from app.modules.notifications.models import Notification  # noqa: F401
 from app.modules.whatsapp.models import (  # noqa: F401
     WhatsAppContact,
     WhatsAppConversation,
