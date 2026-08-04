@@ -567,7 +567,7 @@ export default function ConversationsPage() {
           }
         />
       ) : (
-        <div className="grid gap-3 lg:grid-cols-[320px_1fr]">
+        <div className="grid gap-3 h-[75dvh] lg:grid-cols-[320px_1fr]">
           <Card className="p-0">
             <ScrollArea className="h-[520px]">
               <ul className="flex flex-col">
@@ -621,7 +621,7 @@ export default function ConversationsPage() {
             </ScrollArea>
           </Card>
 
-          <Card className="flex h-[520px] p-0">
+          <Card className="flex p-0">
             {!selected ? (
               <EmptyState
                 title="Select a conversation"

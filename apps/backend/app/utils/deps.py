@@ -62,7 +62,7 @@ def ai_actor_user_id(request: Request) -> str | None:
 def get_current_user(request: Request, session: SessionDep, token: TokenDep) -> User:
     actor = ai_actor_user_id(request)
     if actor:
-        user = session.get(User, uuid.UUID(actor) if uuid.is_valid(actor) else None)
+        user = session.get(User, uuid.UUID(actor) if uuid.UUID(actor) else None)
         if not user or not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

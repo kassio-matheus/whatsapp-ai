@@ -64,6 +64,8 @@ def create_message_notifications(
     created = 0
     for message_id in message_ids:
         message = session.get(WhatsAppMessage, message_id)
+        print(message)
+
         if message is None or not message.is_active:
             continue
         if message.direction != "inbound":
@@ -77,7 +79,8 @@ def create_message_notifications(
         ):
             continue
 
-        conversation = session.get(WhatsAppConversation, message.conversation_id)
+        conversation = session.get(
+            WhatsAppConversation, message.conversation_id)
         contact_name: str | None = None
         if conversation is not None and conversation.contact_id is not None:
             contact = session.get(WhatsAppContact, conversation.contact_id)
@@ -108,7 +111,8 @@ def _recent_unread_for_conversation(
     conversation_id: uuid.UUID,
 ) -> bool:
     cutoff = (
-        datetime.datetime.now(datetime.UTC).replace(tzinfo=None) - RATE_LIMIT_WINDOW
+        datetime.datetime.now(datetime.UTC).replace(
+            tzinfo=None) - RATE_LIMIT_WINDOW
     )
     existing = session.exec(
         select(Notification).where(
@@ -140,7 +144,8 @@ def _resolve_company_id(
         company_id=None,
     )
     if not company_ids:
-        raise HTTPException(status_code=404, detail="Nenhuma empresa encontrada.")
+        raise HTTPException(
+            status_code=404, detail="Nenhuma empresa encontrada.")
     if len(company_ids) > 1:
         raise HTTPException(
             status_code=400,
@@ -158,7 +163,8 @@ def list_notifications(
     limit: int = 50,
     offset: int = 0,
 ) -> NotificationListResponse:
-    resolved = _resolve_company_id(session=session, current_user=current_user, company_id=company_id)
+    resolved = _resolve_company_id(
+        session=session, current_user=current_user, company_id=company_id)
     conditions = [Notification.company_id == resolved]
     if unread_only:
         conditions.append(Notification.is_read.is_(False))
@@ -169,13 +175,13 @@ def list_notifications(
         .order_by(Notification.created_at.desc())
         .offset(offset)
         .limit(limit)
-    ).all()
+    ).scalars().all()
 
     unread_count = session.exec(
         select(func.count())
         .select_from(Notification)
         .where(Notification.company_id == resolved, Notification.is_read.is_(False))
-    ).one()
+    ).scalar_one()
 
     return NotificationListResponse(
         items=[_notification_response(item) for item in items],
@@ -189,12 +195,22 @@ def unread_count(
     current_user: User,
     company_id: uuid.UUID | None = None,
 ) -> UnreadCountResponse:
-    resolved = _resolve_company_id(session=session, current_user=current_user, company_id=company_id)
+
+    if (company_id is None):
+        raise HTTPException(
+            status_code=404,
+            detail="Company ID is required to fetch unread count.",
+        )
+
+    resolved = _resolve_company_id(
+        session=session, current_user=current_user, company_id=company_id)
+
     count = session.exec(
         select(func.count())
         .select_from(Notification)
         .where(Notification.company_id == resolved, Notification.is_read.is_(False))
-    ).one()
+    ).scalar_one()
+
     return UnreadCountResponse(unread_count=count)
 
 
@@ -205,10 +221,12 @@ def _get_notification(
     company_id: uuid.UUID | None,
     notification_id: uuid.UUID,
 ) -> Notification:
-    resolved = _resolve_company_id(session=session, current_user=current_user, company_id=company_id)
+    resolved = _resolve_company_id(
+        session=session, current_user=current_user, company_id=company_id)
     notification = session.get(Notification, notification_id)
     if notification is None or notification.company_id != resolved:
-        raise HTTPException(status_code=404, detail="Notificação não encontrada.")
+        raise HTTPException(
+            status_code=404, detail="Notification not found.")
     return notification
 
 
@@ -239,7 +257,8 @@ def mark_all_notifications_read(
     current_user: User,
     company_id: uuid.UUID | None = None,
 ) -> None:
-    resolved = _resolve_company_id(session=session, current_user=current_user, company_id=company_id)
+    resolved = _resolve_company_id(
+        session=session, current_user=current_user, company_id=company_id)
     notifications = session.exec(
         select(Notification).where(
             Notification.company_id == resolved,

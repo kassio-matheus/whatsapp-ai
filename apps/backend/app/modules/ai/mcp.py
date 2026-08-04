@@ -15,8 +15,6 @@ from fastmcp import FastMCP
 from fastmcp.client.transports.memory import FastMCPTransport
 from mcp import ClientSession
 
-import httpx
-
 from app.core.config import ai_request_secret, settings
 from app.utils.deps import AI_ACTOR_HEADER, AI_REQUEST_HEADER
 
@@ -41,7 +39,6 @@ def init_mcp(app: FastAPI) -> None:
 
     _backend_app = app
 
-    # invalida cache caso reload da aplicação aconteça
     _tools_cache = None
     _tool_index = None
     _catalog_cache = None
@@ -206,8 +203,10 @@ class ToolRetriever:
 
     def __init__(self, tools: list[Any]):
         self.tools = tools
+
         self._doc_tokens = [
-            _tokenize(f"{tool.name} {tool.description or ''}")
+            _tokenize(
+                f"{tool.name} {tool.description or ''} {tool.inputSchema or ''}")
             for tool in tools
         ]
         self._doc_lengths = [len(tokens) for tokens in self._doc_tokens]
@@ -323,12 +322,27 @@ class ToolSet:
         self._allowed = None if allowed_tools is None else set(allowed_tools)
         self._active: dict[str, None] = {}
         limit = limit or settings.AI_TOOL_SELECTION_LIMIT
-        for name in select_tool_names(query, limit=limit):
-            if name in tools_by_name and self.available(name):
-                self._active[name] = None
+
+        selected = {
+            name for name in select_tool_names(query, limit=limit)
+            if name in tools_by_name and self.available(name)
+        }
+
+        # --- fechamento transitivo de pré-requisitos (novo) ---
+        requires_by_name = {t["name"]: t.get(
+            "requires", []) for t in _catalog()}
+        frontier = list(selected)
+        while frontier:
+            for req in requires_by_name.get(frontier.pop(), []):
+                if req not in selected and req in tools_by_name and self.available(req):
+                    selected.add(req)
+                    frontier.append(req)
+        # --------------------------------------------------------
+
+        for name in selected:
+            self._active[name] = None
+
         if not self._active:
-            # The model must always have at least a small, deterministic tool
-            # set to work with, even when the query has no lexical overlap.
             for name in self._tools_by_name:
                 if self.available(name):
                     self._active[name] = None
@@ -363,11 +377,13 @@ class ToolSet:
 
 def _catalog() -> list[dict[str, Any]]:
     global _catalog_cache
+
     if _catalog_cache is None:
         _catalog_cache = sorted(
             list_mcp_tools(),
             key=lambda tool: tool["name"],
         )
+
     return _catalog_cache
 
 
@@ -382,24 +398,31 @@ def build_tool_catalog(
     full JSON schemas. Tools are sorted by name for stability and capped at
     ``AI_TOOL_CATALOG_LIMIT`` lines to keep the prompt small.
     """
+
     tools = _catalog()
+
     if allowed_tools is not None:
         allowed = set(allowed_tools)
         tools = [tool for tool in tools if tool["name"] in allowed]
+
     limit = limit or settings.AI_TOOL_CATALOG_LIMIT
+
     if limit and len(tools) > limit:
         tools = tools[:limit]
     if not tools:
         return ""
 
     lines: list[str] = []
+
     for tool in tools:
         summary = (tool.get("summary") or "").strip().replace("\n", " ")
+
         if len(summary) > 90:
             summary = summary[:87].rstrip() + "..."
         lines.append(
             f"- {tool['name']}: {summary}" if summary else f"- {tool['name']}"
         )
+
     return (
         "Available tools (call a tool only when strictly needed, by its exact "
         f"name):\n{chr(10).join(lines)}"

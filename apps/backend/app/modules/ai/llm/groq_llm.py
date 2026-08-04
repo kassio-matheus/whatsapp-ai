@@ -101,9 +101,12 @@ class Groq(AIPlatform):
         input_items.append({"role": "user", "content": prompt})
 
         parts = [TOOL_GUIDANCE]
+
         if allowed_tools is not None:
             parts.append(SCOPED_TOOL_GUIDANCE)
+
         catalog = build_tool_catalog(allowed_tools=allowed_tools)
+
         if catalog:
             parts.append(catalog)
         if system_prompt:
@@ -209,12 +212,14 @@ class Groq(AIPlatform):
                     query=selection_query_from_items(input_items),
                     allowed_tools=allowed_tools,
                 )
+
                 tool_definitions = [
                     self._to_openai_tool(tool) for tool in toolset.tools()
                 ]
 
                 failed_calls: dict[tuple[str, str],
                                    dict[str, object]] = {}
+
 
                 response = await create_response_with_tool_retry(
                     client=client,
@@ -234,6 +239,7 @@ class Groq(AIPlatform):
                         break
 
                     function_outputs: list[dict[str, str]] = []
+                    print(function_calls)   
                     for function_call in function_calls:
                         name = function_call.name
                         args_key = function_call.arguments
@@ -313,6 +319,7 @@ class Groq(AIPlatform):
                           for item in response.output],
                         *function_outputs,
                     ]
+
                     response = await create_response_with_tool_retry(
                         client=client,
                         input_items=input_items,

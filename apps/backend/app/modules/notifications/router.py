@@ -32,7 +32,9 @@ def list_notifications(
     )
 
 
-@router.get("/unread-count", response_model=UnreadCountResponse)
+@router.get("/unread-count", response_model=UnreadCountResponse, responses={
+    404: {"description": "Company ID is required to fetch unread count."}
+})
 def get_unread_count(
     session: SessionDep,
     current_user: CurrentUser,

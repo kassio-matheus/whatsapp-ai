@@ -18,11 +18,13 @@ dependencies = [
     "groq>=1.6.0",
     "openai>=2.11.0",
     "opencode-ai>=0.1.0a36",
+    "openrouter>=1.1.27",
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
     "sqlmodel>=0.0.39",
     "uvicorn[standard]>=0.52.0",
+    "watchfiles>=1.2.0",
 ]
 
 [dependency-groups]

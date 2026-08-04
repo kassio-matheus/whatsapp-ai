@@ -187,12 +187,15 @@ def _supports_thinking_by_provider(
 
 def _stored_keys(row: object | None) -> dict[LLMProvider, str]:
     keys: dict[LLMProvider, str] = {}
+
     if row is None:
         return keys
     for provider in PROVIDER_ORDER:
         api_key = decrypt_value(getattr(row, _PROVIDER_KEY_ATTR[provider]))
+
         if api_key:
             keys[provider] = api_key
+
     return keys
 
 
@@ -209,6 +212,7 @@ def _stored_models(row: object | None) -> dict[LLMProvider, str]:
 
 def _env_keys() -> dict[LLMProvider, str]:
     keys: dict[LLMProvider, str] = {}
+    
     for provider in PROVIDER_ORDER:
         api_key = getattr(settings, _ENV_KEY_ATTR[provider], "")
         if api_key:
@@ -493,9 +497,11 @@ def build_llm_for_company(
 ) -> AIPlatform:
     """Build the company chain, falling back to the global chain."""
     row = get_company_llm_settings(session=session, company_id=company_id)
+
     keys = _stored_keys(row)
     if not keys:
         return build_global_llm(session=session)
+
     return FailoverLLM(providers=_chain_from_row(row=row, keys=keys))
 
 
@@ -503,4 +509,5 @@ def build_llm_for_user(*, session: Session, user: User | None) -> AIPlatform:
     """Build the chain for a user's company, or the global chain."""
     if user is not None and user.company_id is not None:
         return build_llm_for_company(session=session, company_id=user.company_id)
+    
     return build_global_llm(session=session)

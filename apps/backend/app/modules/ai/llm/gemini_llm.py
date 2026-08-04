@@ -57,16 +57,16 @@ class Gemini(AIPlatform):
         prompt: str,
         context: list[dict[str, str]] | None = None,
         system_prompt: str | None = None,
-        auth_token: str | None = None,
+        actor_user_id: str | None = None,
         allowed_tools: list[str] | None = None,
     ) -> ChatResponseStructure:
-        input_items: list[dict[str, str]] = []
+        input_items: list[dict[str, Any]] = []
 
         if context:
             for msg in context:
                 input_items.append(
                     {
-                        "role": "user" if msg["role"] == "user" else "model",
+                        "role": "user" if msg["role"] == "user" else "assistant",
                         "content": msg["content"],
                     }
                 )
@@ -87,7 +87,7 @@ class Gemini(AIPlatform):
             self._generate_async(
                 input_items=input_items,
                 instruction=instruction,
-                auth_token=auth_token,
+                actor_user_id=actor_user_id,
                 allowed_tools=allowed_tools,
             )
         )

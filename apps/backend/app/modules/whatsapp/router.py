@@ -522,6 +522,7 @@ async def stream_instance_events(
     response_model=WhatsAppInstanceResponse,
     summary="Get a WhatsApp instance",
     description="Return a single WhatsApp instance by its identifier.",
+    operation_id="get_instance_by_id",
 )
 def get_integration(
     integration_id: uuid.UUID,
@@ -612,7 +613,8 @@ def list_contacts(
     limit: int = Query(
         default=50, ge=1, le=200, description="Maximum number of contacts to return."
     ),
-    offset: int = Query(default=0, ge=0, description="Number of contacts to skip."),
+    offset: int = Query(
+        default=0, ge=0, description="Number of contacts to skip."),
 ) -> list[WhatsAppContactResponse]:
     return [
         _contact_response(item)
@@ -632,6 +634,7 @@ def list_contacts(
     response_model=WhatsAppContactResponse,
     summary="Get a WhatsApp contact",
     description="Return a single WhatsApp contact by its identifier.",
+    operation_id="get_contact_by_id",
 )
 def get_contact(
     contact_id: uuid.UUID,
@@ -777,7 +780,8 @@ def list_conversation_messages(
     limit: int = Query(
         default=100, ge=1, le=500, description="Maximum number of messages to return."
     ),
-    offset: int = Query(default=0, ge=0, description="Number of messages to skip."),
+    offset: int = Query(
+        default=0, ge=0, description="Number of messages to skip."),
 ) -> list[WhatsAppMessageResponse]:
     return [
         _message_response(item)
@@ -898,8 +902,7 @@ def delete_conversation(
 def create_message(
     data: WhatsAppMessageCreate,
     session: SessionDep,
-    current_user: CurrentUser,
-    _: AIProtected,
+    current_user: CurrentUser
 ) -> WhatsAppMessageResponse:
     return _message_response(
         service.create_message(
@@ -925,7 +928,8 @@ def list_messages(
     limit: int = Query(
         default=100, ge=1, le=500, description="Maximum number of messages to return."
     ),
-    offset: int = Query(default=0, ge=0, description="Number of messages to skip."),
+    offset: int = Query(
+        default=0, ge=0, description="Number of messages to skip."),
 ) -> list[WhatsAppMessageResponse]:
     return [
         _message_response(item)

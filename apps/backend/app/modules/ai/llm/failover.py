@@ -30,7 +30,8 @@ class AllProvidersFailed(RuntimeError):
     def __init__(self, failures: list[tuple[str, str]]):
         self.failures = failures
         if failures:
-            message = "; ".join(f"{name}: {reason}" for name, reason in failures)
+            message = "; ".join(
+                f"{name}: {reason}" for name, reason in failures)
         else:
             message = "No LLM provider is configured"
         super().__init__(message)
@@ -56,7 +57,8 @@ class FailoverLLM(AIPlatform):
         failures: list[tuple[str, str]] = []
         for provider in self.providers:
             try:
-                console.print(f"[bold cyan]>>> LLM: {type(provider).__name__}[/]")
+                console.print(
+                    f"[bold cyan]>>> LLM: {type(provider).__name__}[/]")
                 result = provider.generate(
                     prompt=prompt,
                     context=context,
@@ -64,6 +66,7 @@ class FailoverLLM(AIPlatform):
                     actor_user_id=actor_user_id,
                     allowed_tools=allowed_tools,
                 )
+
                 if not (result.response or "").strip():
                     raise EmptyResponseError(
                         f"{type(provider).__name__} returned an empty reply"

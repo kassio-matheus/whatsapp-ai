@@ -71,6 +71,7 @@ def list_companies(
     response_model=CompanyResponse,
     summary="Get company",
     description="Return a single company owned by the current super admin.",
+    operation_id="get_company_by_id",
 )
 def get_company(
     company_id: uuid.UUID,

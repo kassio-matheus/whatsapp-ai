@@ -1,35 +1,4 @@
-import datetime
-import hmac
-import json
-import logging
-import re
-import uuid
-from pathlib import Path
-from typing import Any, cast
-
-from fastapi import HTTPException, UploadFile
-from pydantic import ValidationError
-from sqlalchemy import asc, desc
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
-
-from app.core.config import settings
-from app.core.r2 import R2Error, R2Object, r2
-from app.modules.auth.models import User
-from app.modules.companies.models import Company
-
-logger = logging.getLogger(__name__)
-
-from .adapters import whatsapp_adapter_registry
-from .cloud_api import (
-    META_CLOUD_API_ADAPTER,
-    CloudApiConnectionInfo,
-    MediaDownload,
-    MetaCloudApiClient,
-    MetaCloudApiError,
-    verify_webhook_signature,
-)
-from .events import whatsapp_event_broker
+from .phone_numbers import format_phone_number_for_meta
 from .models import (
     INTERNAL_MESSAGE_TYPES,
     IntegrationType,
@@ -54,7 +23,38 @@ from .models import (
     WhatsAppMessageCreate,
     WhatsAppMessageUpdate,
 )
-from .phone_numbers import format_phone_number_for_meta
+from .events import whatsapp_event_broker
+from .cloud_api import (
+    META_CLOUD_API_ADAPTER,
+    CloudApiConnectionInfo,
+    MediaDownload,
+    MetaCloudApiClient,
+    MetaCloudApiError,
+    verify_webhook_signature,
+)
+from .adapters import whatsapp_adapter_registry
+import datetime
+import hmac
+import json
+import logging
+import re
+import uuid
+from pathlib import Path
+from typing import Any, cast
+
+from fastapi import HTTPException, UploadFile
+from pydantic import ValidationError
+from sqlalchemy import asc, desc
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, select
+
+from app.core.config import settings
+from app.core.r2 import R2Error, R2Object, r2
+from app.modules.auth.models import User
+from app.modules.companies.models import Company
+from app.modules.ai.llm_settings import build_global_llm
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime.datetime:
@@ -133,7 +133,8 @@ def upload_media(
         while chunk := file.file.read(64 * 1024):
             size += len(chunk)
             if size > settings.MAX_UPLOAD_BYTES:
-                raise HTTPException(status_code=413, detail="File is too large")
+                raise HTTPException(
+                    status_code=413, detail="File is too large")
             chunk_buffer.extend(chunk)
     finally:
         file.file.close()
@@ -153,7 +154,8 @@ def download_media(*, key: str) -> tuple[bytes, str | None]:
         body, content_type = r2.get_object(key=key)
     except Exception as exc:
         raise HTTPException(
-            status_code=404 if getattr(exc, "status_code", None) == 404 else 502,
+            status_code=404 if getattr(
+                exc, "status_code", None) == 404 else 502,
             detail="Could not retrieve media object",
         ) from exc
     return body, content_type
@@ -217,7 +219,8 @@ def _get_integration(
 ) -> WhatsAppIntegration:
     integration = session.get(WhatsAppIntegration, integration_id)
     if not integration or not integration.is_active:
-        raise HTTPException(status_code=404, detail="WhatsApp integration not found")
+        raise HTTPException(
+            status_code=404, detail="WhatsApp integration not found")
     _ensure_company_access(
         session=session,
         company_id=integration.company_id,
@@ -231,14 +234,16 @@ def _get_contact(
 ) -> WhatsAppContact:
     contact = session.get(WhatsAppContact, contact_id)
     if not contact or not contact.is_active:
-        raise HTTPException(status_code=404, detail="WhatsApp contact not found")
+        raise HTTPException(
+            status_code=404, detail="WhatsApp contact not found")
     integration = _get_integration(
         session=session,
         integration_id=contact.integration_id,
         current_user=current_user,
     )
     if contact.company_id != integration.company_id:
-        raise HTTPException(status_code=404, detail="WhatsApp contact not found")
+        raise HTTPException(
+            status_code=404, detail="WhatsApp contact not found")
     return contact
 
 
@@ -247,14 +252,16 @@ def _get_conversation(
 ) -> WhatsAppConversation:
     conversation = session.get(WhatsAppConversation, conversation_id)
     if not conversation or not conversation.is_active:
-        raise HTTPException(status_code=404, detail="WhatsApp conversation not found")
+        raise HTTPException(
+            status_code=404, detail="WhatsApp conversation not found")
     integration = _get_integration(
         session=session,
         integration_id=conversation.integration_id,
         current_user=current_user,
     )
     if conversation.company_id != integration.company_id:
-        raise HTTPException(status_code=404, detail="WhatsApp conversation not found")
+        raise HTTPException(
+            status_code=404, detail="WhatsApp conversation not found")
     return conversation
 
 
@@ -263,7 +270,8 @@ def _get_message(
 ) -> WhatsAppMessage:
     message = session.get(WhatsAppMessage, message_id)
     if not message or not message.is_active:
-        raise HTTPException(status_code=404, detail="WhatsApp message not found")
+        raise HTTPException(
+            status_code=404, detail="WhatsApp message not found")
     conversation = _get_conversation(
         session=session,
         conversation_id=message.conversation_id,
@@ -273,7 +281,8 @@ def _get_message(
         message.company_id != conversation.company_id
         or message.integration_id != conversation.integration_id
     ):
-        raise HTTPException(status_code=404, detail="WhatsApp message not found")
+        raise HTTPException(
+            status_code=404, detail="WhatsApp message not found")
     return message
 
 
@@ -1457,20 +1466,28 @@ def create_ai_message(
     from app.modules.ai.llm.common import friendly_provider_error
     from app.modules.ai.service import llm
 
+    integration = session.get(WhatsAppIntegration, conversation.integration_id)
+
     system_prompt = (
         "You are an AI assistant embedded in a customer-support WhatsApp inbox. "
         "You help the operator draft replies to the contact. Use the conversation "
         "history as context and answer in the same language as the customer. "
         "Reply directly with a ready-to-send draft, concise and friendly. "
-        "Do NOT call any tools and never send or create messages."
+        "Read all input schema of HTTP Request on use tools"
+        "Only use the information provided in the conversation history and the prompt. "
+        "Only use tools that user prompt request. Do not make up any information. "
+        f"Chat info: {conversation}, user: {current_user}, session/integration: {integration}"
     )
     try:
+        llm = build_global_llm(session=session)
+
         result = llm.generate(
             prompt=prompt,
             context=context,
             system_prompt=system_prompt,
             actor_user_id=actor_user_id,
         )
+
     except Exception as exc:
         raise HTTPException(
             status_code=502,
@@ -1619,7 +1636,8 @@ def create_ai_reply_message(
             )
         contact = session.get(WhatsAppContact, conversation.contact_id)
         if contact is None:
-            raise HTTPException(status_code=404, detail="WhatsApp contact not found")
+            raise HTTPException(
+                status_code=404, detail="WhatsApp contact not found")
         metadata["recipient_phone_number"] = contact.phone_number
         pending_message = WhatsAppMessage(
             company_id=conversation.company_id,
@@ -1702,19 +1720,22 @@ def verify_meta_webhook(
     """Handle Meta's GET challenge for the shared public webhook endpoint."""
 
     if mode != "subscribe" or not verify_token or challenge is None:
-        raise HTTPException(status_code=403, detail="Invalid Meta webhook verification")
+        raise HTTPException(
+            status_code=403, detail="Invalid Meta webhook verification")
 
     statement = select(WhatsAppIntegration).where(
         WhatsAppIntegration.adapter == META_CLOUD_API_ADAPTER,
         WhatsAppIntegration.is_active == True,
     )
     for integration in session.exec(statement).all():
-        configured_token = integration.credentials_json.get("webhook_verify_token")
+        configured_token = integration.credentials_json.get(
+            "webhook_verify_token")
         if isinstance(configured_token, str) and hmac.compare_digest(
             configured_token, verify_token
         ):
             return challenge
-    raise HTTPException(status_code=403, detail="Invalid Meta webhook verification")
+    raise HTTPException(
+        status_code=403, detail="Invalid Meta webhook verification")
 
 
 def _cloud_integrations_for_webhook(
@@ -1880,7 +1901,8 @@ def _store_inbound_media(
         return reference, {"media_r2_status": "download_failed", "media_error": str(exc)}
 
     extension = _extension_for(media.mime_type)
-    base_name = _safe_filename(media.filename) if media.filename else external_id
+    base_name = _safe_filename(
+        media.filename) if media.filename else external_id
     stem = Path(base_name).stem or "media"
     key = f"whatsapp/{integration.company_id}/{integration.id}/media/{external_id}/{stem}{extension}"
     try:
@@ -2051,7 +2073,8 @@ def _process_webhook_change(
                 }
                 and message.sent_at is None
             ):
-                message.sent_at = _webhook_timestamp(status_payload.get("timestamp"))
+                message.sent_at = _webhook_timestamp(
+                    status_payload.get("timestamp"))
             message.metadata_json = {
                 **message.metadata_json,
                 "last_status": status_payload,
@@ -2075,7 +2098,8 @@ def process_meta_webhook(
             status_code=400, detail="Invalid Meta webhook JSON"
         ) from exc
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Invalid Meta webhook payload")
+        raise HTTPException(
+            status_code=400, detail="Invalid Meta webhook payload")
 
     entries = payload.get("entry")
     if not isinstance(entries, list):
@@ -2105,7 +2129,8 @@ def process_meta_webhook(
         ):
             valid_integrations.append(integration)
     if not valid_integrations:
-        raise HTTPException(status_code=403, detail="Invalid Meta webhook signature")
+        raise HTTPException(
+            status_code=403, detail="Invalid Meta webhook signature")
 
     processed = 0
     template_catalog_changed = False
@@ -2161,7 +2186,8 @@ def process_meta_webhook(
                 message_ids=inbound_message_ids,
             )
         except Exception:
-            logger.exception("Failed to create notifications for inbound messages")
+            logger.exception(
+                "Failed to create notifications for inbound messages")
         for message_id in inbound_message_ids:
             # Imported lazily so the WhatsApp module does not depend on the AI
             # module at import time. The responder re-validates eligibility and
@@ -2172,5 +2198,6 @@ def process_meta_webhook(
 
                 process_inbound_message(session=session, message_id=message_id)
             except Exception:
-                logger.exception("Failed to schedule AI auto-reply for %s", message_id)
+                logger.exception(
+                    "Failed to schedule AI auto-reply for %s", message_id)
     return {"received": True, "processed": processed}
