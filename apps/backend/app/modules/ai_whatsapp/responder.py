@@ -111,10 +111,12 @@ def _process(message_id: uuid.UUID) -> None:
         message = session.get(WhatsAppMessage, message_id)
         if message is None or not message.is_active:
             return
-        conversation = session.get(WhatsAppConversation, message.conversation_id)
+        conversation = session.get(
+            WhatsAppConversation, message.conversation_id)
         if conversation is None or not conversation.is_active:
             return
-        integration = session.get(WhatsAppIntegration, conversation.integration_id)
+        integration = session.get(
+            WhatsAppIntegration, conversation.integration_id)
         if integration is None:
             return
         if not should_auto_reply(
@@ -143,7 +145,8 @@ def _generate_and_send(
     company = session.get(Company, conversation.company_id)
     if company is None:
         return
-    company_settings = get_company_settings(session=session, company_id=company.id)
+    company_settings = get_company_settings(
+        session=session, company_id=company.id)
     conversation_setting = get_conversation_ai_settings(
         session=session, conversation_id=conversation.id
     )
@@ -165,6 +168,7 @@ def _generate_and_send(
     )
 
     parts = [DEFAULT_AUTO_REPLY_SYSTEM_PROMPT]
+
     if company_settings is not None and company_settings.system_prompt:
         parts.append(company_settings.system_prompt)
     if conversation_setting is not None and conversation_setting.system_prompt:
@@ -173,12 +177,11 @@ def _generate_and_send(
 
     context = _recent_context(session=session, conversation_id=conversation.id)
 
-    from app.modules.ai.llm_settings import build_llm_for_company
+    from app.modules.ai.llm_settings import build_global_llm
 
     try:
-        result = build_llm_for_company(
-            session=session,
-            company_id=company.id,
+        result = build_global_llm(
+            session=session
         ).generate(
             prompt=message.content or "",
             context=context,
@@ -186,6 +189,8 @@ def _generate_and_send(
             actor_user_id=str(company.owner_id),
             allowed_tools=scope.allowed_tools,
         )
+
+        print(result.response)
     except Exception as exc:  # noqa: BLE001 - deliver a graceful failure note
         _logger.warning("AI auto-reply generation failed: %s", exc)
         whatsapp_service.create_ai_failure_note(
