@@ -1,4 +1,6 @@
 from collections.abc import Generator
+import hmac
+import uuid
 from typing import Annotated
 
 import jwt
@@ -7,7 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import ValidationError
 from sqlmodel import Session
 
-from app.core.config import settings
+from app.core.config import ai_request_secret, settings
 from app.core.db import engine
 from app.core.security import ACCESS_TOKEN_PURPOSE, ALGORITHM
 from app.modules.auth import TokenPayload, User
@@ -35,7 +37,38 @@ SessionDep = Annotated[Session, Depends(get_db)]
 TokenDep = Annotated[str | None, Depends(get_bearer_token)]
 
 
-def get_current_user(session: SessionDep, token: TokenDep) -> User:
+AI_REQUEST_HEADER = "X-AI-Request"
+AI_ACTOR_HEADER = "X-AI-Actor"
+
+
+def ai_actor_user_id(request: Request) -> str | None:
+    """Resolve the acting user id for an internal AI-originated request.
+
+    AI tool calls are authorized natively (no user JWT). The MCP client tags
+    the request with ``X-AI-Request`` carrying the server-side secret and
+    ``X-AI-Actor`` carrying the user the AI is acting as (e.g. the company
+    owner for auto-replies, or the dashboard user for the chat). The secret
+    makes the pair unforgeable from outside the process.
+    """
+    candidate = request.headers.get(AI_REQUEST_HEADER)
+    actor = request.headers.get(AI_ACTOR_HEADER)
+    if not candidate or not actor:
+        return None
+    if not hmac.compare_digest(candidate, ai_request_secret()):
+        return None
+    return actor
+
+
+def get_current_user(request: Request, session: SessionDep, token: TokenDep) -> User:
+    actor = ai_actor_user_id(request)
+    if actor:
+        user = session.get(User, uuid.UUID(actor) if uuid.is_valid(actor) else None)
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Could not validate AI actor",
+            )
+        return user
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -60,7 +93,9 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
-def require_auth(token: TokenDep) -> None:
+def require_auth(request: Request, token: TokenDep) -> None:
+    if ai_actor_user_id(request):
+        return
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -89,9 +124,6 @@ def require_super_admin(current_user: CurrentUser) -> None:
 
 
 SuperAdmin = Annotated[None, Depends(require_super_admin)]
-
-
-AI_REQUEST_HEADER = "X-AI-Request"
 
 
 def forbid_ai(request: Request) -> None:

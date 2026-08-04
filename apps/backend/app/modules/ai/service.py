@@ -192,7 +192,7 @@ def chat(
     session_id: uuid.UUID,
     user_id: uuid.UUID,
     prompt: str,
-    auth_token: str | None = None,
+    actor_user_id: str | None = None,
 ) -> str:
     get_session(session_id=session_id, user_id=user_id)
 
@@ -253,7 +253,7 @@ def chat(
                 prompt=prompt,
                 context=context,
                 system_prompt=chat_session.system_prompt,
-                auth_token=auth_token,
+                actor_user_id=actor_user_id,
             )
         except HTTPException:
             raise

@@ -1,7 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { CircleAlert, KeyRound, LoaderCircle, Save, Sparkles } from "lucide-react"
+import {
+  CircleAlert,
+  KeyRound,
+  LoaderCircle,
+  Save,
+  Sparkles,
+} from "lucide-react"
 
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
@@ -87,7 +93,8 @@ export default function AISettingsPage() {
   const [saving, setSaving] = React.useState(false)
 
   const [settings, setSettings] = React.useState<AIGlobalSettings | null>(null)
-  const [selectedProvider, setSelectedProvider] = React.useState<LLMProvider | null>(null)
+  const [selectedProvider, setSelectedProvider] =
+    React.useState<LLMProvider | null>(null)
   const [providerModels, setProviderModels] = React.useState<
     Record<LLMProvider, string>
   >({ deepseek: "", openai: "", gemini: "", groq: "" })
@@ -95,7 +102,10 @@ export default function AISettingsPage() {
     Record<LLMProvider, string>
   >({ deepseek: "", openai: "", gemini: "", groq: "" })
   const [providerThinking, setProviderThinking] = React.useState<
-    Record<LLMProvider, { supportsThinking: boolean; reasoning: ReasoningLevel }>
+    Record<
+      LLMProvider,
+      { supportsThinking: boolean; reasoning: ReasoningLevel }
+    >
   >({
     deepseek: { supportsThinking: true, reasoning: "medium" },
     openai: { supportsThinking: true, reasoning: "medium" },
@@ -119,12 +129,14 @@ export default function AISettingsPage() {
           LLM_PROVIDERS.reduce(
             (acc, provider) => {
               acc[provider.value] =
-                result.providers[provider.value].model ??
-                provider.defaultModel
+                result.providers[provider.value].model ?? provider.defaultModel
               return acc
             },
-            { deepseek: "", openai: "", gemini: "", groq: "" } as Record<LLMProvider, string>,
-          ),
+            { deepseek: "", openai: "", gemini: "", groq: "" } as Record<
+              LLMProvider,
+              string
+            >
+          )
         )
         setProviderThinking(
           LLM_PROVIDERS.reduce(
@@ -141,8 +153,11 @@ export default function AISettingsPage() {
               openai: { supportsThinking: true, reasoning: "medium" },
               gemini: { supportsThinking: true, reasoning: "medium" },
               groq: { supportsThinking: true, reasoning: "medium" },
-            } as Record<LLMProvider, { supportsThinking: boolean; reasoning: ReasoningLevel }>,
-          ),
+            } as Record<
+              LLMProvider,
+              { supportsThinking: boolean; reasoning: ReasoningLevel }
+            >
+          )
         )
         setProviderKeys({ deepseek: "", openai: "", gemini: "", groq: "" })
         setError(null)
@@ -150,13 +165,13 @@ export default function AISettingsPage() {
         setError(
           err instanceof ApiClientError
             ? err.message
-            : "Could not load the AI settings.",
+            : "Could not load the AI settings."
         )
       } finally {
         setIsLoading(false)
       }
     },
-    [token],
+    [token]
   )
 
   React.useEffect(() => {
@@ -186,12 +201,13 @@ export default function AISettingsPage() {
           openai_reasoning_effort: providerThinking.openai.reasoning,
           gemini_reasoning_effort: providerThinking.gemini.reasoning,
           groq_reasoning_effort: providerThinking.groq.reasoning,
-          deepseek_supports_thinking: providerThinking.deepseek.supportsThinking,
+          deepseek_supports_thinking:
+            providerThinking.deepseek.supportsThinking,
           openai_supports_thinking: providerThinking.openai.supportsThinking,
           gemini_supports_thinking: providerThinking.gemini.supportsThinking,
           groq_supports_thinking: providerThinking.groq.supportsThinking,
         },
-        token,
+        token
       )
       setSettings(result)
       setSelectedProvider(result.selected_provider)
@@ -210,15 +226,18 @@ export default function AISettingsPage() {
             openai: { supportsThinking: true, reasoning: "medium" },
             gemini: { supportsThinking: true, reasoning: "medium" },
             groq: { supportsThinking: true, reasoning: "medium" },
-          } as Record<LLMProvider, { supportsThinking: boolean; reasoning: ReasoningLevel }>,
-        ),
+          } as Record<
+            LLMProvider,
+            { supportsThinking: boolean; reasoning: ReasoningLevel }
+          >
+        )
       )
       setProviderKeys({ deepseek: "", openai: "", gemini: "", groq: "" })
     } catch (err) {
       setError(
         err instanceof ApiClientError
           ? err.message
-          : "Could not save the AI settings.",
+          : "Could not save the AI settings."
       )
     } finally {
       setSaving(false)
@@ -263,7 +282,7 @@ export default function AISettingsPage() {
       ) : (
         <form
           onSubmit={(event) => void handleSave(event)}
-          className="flex max-w-2xl flex-col gap-4"
+          className="flex w-full flex-col gap-4"
         >
           <Card>
             <CardHeader>
@@ -273,15 +292,18 @@ export default function AISettingsPage() {
               </CardTitle>
               <CardDescription>
                 Pick the primary provider. If it fails, the remaining providers
-                with a key are tried in order (DeepSeek then OpenAI then Gemini).
-                The chosen provider always moves to the front of the chain.
+                with a key are tried in order. The chosen provider always moves to the front of the chain.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div className="grid gap-2 sm:grid-cols-3">
                 {LLM_PROVIDERS.map((provider) => {
                   const isSelected = selectedProvider === provider.value
-                  const configured = settings?.providers[provider.value]?.configured
+                  const configured =
+                    settings?.providers[provider.value]?.configured
+
+                  const model: string | undefined | null =
+                    settings?.providers[provider.value]?.model
                   return (
                     <button
                       key={provider.value}
@@ -291,17 +313,20 @@ export default function AISettingsPage() {
                         "flex flex-col gap-2 rounded-none border p-3 text-start transition-colors",
                         isSelected
                           ? "border-primary bg-primary/5"
-                          : "hover:border-border hover:bg-accent",
+                          : "hover:border-border hover:bg-accent"
                       )}
                     >
                       <span className="flex items-center justify-between">
                         <span className="flex size-7 items-center justify-center rounded-full border bg-muted/40">
-                          <LLMLogo provider={provider.value} className="size-4" />
+                          <LLMLogo
+                            provider={provider.value}
+                            className="size-4"
+                          />
                         </span>
                         <span
                           className={cn(
                             "flex size-3.5 items-center justify-center rounded-full border",
-                            isSelected && "border-primary",
+                            isSelected && "border-primary"
                           )}
                         >
                           {isSelected ? (
@@ -309,12 +334,17 @@ export default function AISettingsPage() {
                           ) : null}
                         </span>
                       </span>
-                      <span className="text-xs font-medium">{provider.label}</span>
+                      <span className="text-xs font-medium">
+                        {provider.label}
+                      </span>
                       <span className="font-mono text-[10px] text-muted-foreground">
-                        {provider.defaultModel}
+                        {model || provider.defaultModel}
                       </span>
                       {configured ? (
-                        <Badge variant="secondary" className="w-fit text-[10px]">
+                        <Badge
+                          variant="secondary"
+                          className="w-fit bg-green-50 text-[10px]"
+                        >
                           key saved
                         </Badge>
                       ) : (
@@ -354,7 +384,8 @@ export default function AISettingsPage() {
               </CardTitle>
               <CardDescription>
                 Set a model per provider and choose how much thinking effort the
-                AI spends on each response. The model needs to support: A large number of parameters and JSON Schema.
+                AI spends on each response. The model needs to support: A large
+                number of parameters and JSON Schema.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
@@ -367,7 +398,10 @@ export default function AISettingsPage() {
                   >
                     <div className="flex items-center justify-between gap-3">
                       <span className="inline-flex items-center gap-1.5 text-xs font-medium">
-                        <LLMLogo provider={provider.value} className="size-3.5" />
+                        <LLMLogo
+                          provider={provider.value}
+                          className="size-3.5"
+                        />
                         {provider.label}
                       </span>
                       <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
@@ -453,7 +487,8 @@ export default function AISettingsPage() {
             </CardHeader>
             <CardContent className="flex flex-col divide-y">
               {LLM_PROVIDERS.map((provider) => {
-                const configured = settings?.providers[provider.value]?.configured
+                const configured =
+                  settings?.providers[provider.value]?.configured
                 return (
                   <div
                     key={provider.value}
@@ -462,7 +497,10 @@ export default function AISettingsPage() {
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-xs font-medium">
                         <span className="inline-flex items-center gap-1.5">
-                          <LLMLogo provider={provider.value} className="size-3.5" />
+                          <LLMLogo
+                            provider={provider.value}
+                            className="size-3.5"
+                          />
                           {provider.label}
                         </span>
                       </span>
@@ -498,9 +536,7 @@ export default function AISettingsPage() {
             </CardContent>
           </Card>
 
-          {error ? (
-            <p className="text-xs text-destructive">{error}</p>
-          ) : null}
+          {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
           <div className="flex items-center justify-end gap-2">
             <Button type="submit" disabled={saving}>

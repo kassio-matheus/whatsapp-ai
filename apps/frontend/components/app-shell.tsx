@@ -17,6 +17,8 @@ import {
   Smartphone,
   Sparkles,
   UserRound,
+  Wrench,
+  EllipsisVertical,
 } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@workspace/ui/components/avatar"
@@ -113,7 +115,7 @@ const AI_SUB_NAV: NavItem[] = [
   },
   {
     title: "AI Settings",
-    icon: Sparkles,
+    icon: Wrench,
     buildHref: () => "/ai/settings",
   },
 ]
@@ -231,7 +233,7 @@ function UserBlock() {
                 {user.is_super_admin ? "Super admin" : "Member"}
               </span>
             </div>
-            <ChevronsUpDown className="size-3 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
+            <EllipsisVertical className="size-3 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
           </button>
         }
       />
@@ -423,6 +425,8 @@ function AppShell({ children }: { children: React.ReactNode }) {
   const companyName =
     companies.find((company) => company.id === currentCompanyId)?.name ?? null
 
+  const pathnames: Array<string> = pathname.split("/").filter(Boolean)
+
   if (isLoading || !user) {
     return (
       <div className="flex min-h-svh flex-col">
@@ -462,10 +466,13 @@ function AppShell({ children }: { children: React.ReactNode }) {
         </SidebarContent>
         <SidebarFooter>
           <div className="flex items-center justify-between px-2 py-1.5 group-data-[collapsible=icon]:justify-start group-data-[collapsible=icon]:px-0">
+            <span></span>
+            {/*
             <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground group-data-[collapsible=icon]:hidden">
               <Sparkles className="size-3" />
               Workspace
             </span>
+            */}
             <SidebarTrigger className="group-data-[collapsible=icon]:size-8" />
           </div>
         </SidebarFooter>
@@ -477,12 +484,38 @@ function AppShell({ children }: { children: React.ReactNode }) {
           <div className="flex min-w-0 items-center gap-2 text-xs">
             {companyName ? (
               <>
-                <span className="hidden truncate font-medium md:block">
+                <Link href="/" className="hidden truncate font-medium md:block">
                   {companyName}
-                </span>
+                </Link>
                 <span className="hidden text-muted-foreground md:block">/</span>
+
+                {pathnames.length !== 0 &&
+                  pathnames.map((segment, index) => {
+                    const href = `/${pathnames.slice(0, index + 1).join("/")}`
+                    const isLast = index === pathnames.length - 1
+
+                    return (
+                      <React.Fragment key={href}>
+                        <Link
+                          href={href}
+                          className={cn(
+                            "hidden truncate md:block",
+                            isLast ? "font-medium" : "text-muted-foreground"
+                          )}
+                        >
+                          {segment.slice(0, 1).toUpperCase() + segment.slice(1)}
+                        </Link>
+                        {!isLast && (
+                          <span className="hidden text-muted-foreground md:block">
+                            /
+                          </span>
+                        )}
+                      </React.Fragment>
+                    )
+                  })}
               </>
             ) : null}
+
             <span
               className={cn(
                 "truncate text-muted-foreground",
@@ -499,7 +532,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
             {user.is_super_admin ? "Super admin" : "Member"}
           </Badge>
         </header>
-        <div key={pathname} className="animate-fade-up min-h-0 flex-1">
+        <div key={pathname} className="min-h-0 flex-1 animate-fade-up">
           {children}
         </div>
       </SidebarInset>

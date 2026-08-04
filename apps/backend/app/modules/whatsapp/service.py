@@ -1414,7 +1414,7 @@ def create_ai_message(
     current_user: User,
     conversation_id: uuid.UUID,
     prompt: str,
-    auth_token: str | None = None,
+    actor_user_id: str | None = None,
 ) -> tuple[WhatsAppMessage, WhatsAppMessage, str]:
     conversation = _get_conversation(
         session=session,
@@ -1469,7 +1469,7 @@ def create_ai_message(
             prompt=prompt,
             context=context,
             system_prompt=system_prompt,
-            auth_token=auth_token,
+            actor_user_id=actor_user_id,
         )
     except Exception as exc:
         raise HTTPException(

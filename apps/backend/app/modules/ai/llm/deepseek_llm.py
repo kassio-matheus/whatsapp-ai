@@ -53,7 +53,7 @@ class DeepSeek(AIPlatform):
         prompt: str,
         context: list[dict[str, str]] | None = None,
         system_prompt: str | None = None,
-        auth_token: str | None = None,
+        actor_user_id: str | None = None,
         allowed_tools: list[str] | None = None,
     ) -> ChatResponseStructure:
         input_items: list[dict[str, Any]] = []
@@ -83,7 +83,7 @@ class DeepSeek(AIPlatform):
             self._generate_async(
                 input_items=input_items,
                 instruction=instruction,
-                auth_token=auth_token,
+                actor_user_id=actor_user_id,
                 allowed_tools=allowed_tools,
             )
         )
@@ -136,7 +136,7 @@ class DeepSeek(AIPlatform):
         self,
         input_items: list[dict[str, Any]],
         instruction: str | None,
-        auth_token: str | None,
+        actor_user_id: str | None,
         allowed_tools: list[str] | None,
     ) -> ChatResponseStructure:
         messages: list[dict[str, Any]] = self._merge_messages(
@@ -149,7 +149,7 @@ class DeepSeek(AIPlatform):
 
         async with (
             AsyncOpenAI(api_key=self.api_key, base_url=self.base_url) as client,
-            mcp_session(auth_token=auth_token) as session,
+            mcp_session(actor_user_id=actor_user_id) as session,
         ):
             mcp_tools = await get_tools(session)
             toolset = ToolSet(

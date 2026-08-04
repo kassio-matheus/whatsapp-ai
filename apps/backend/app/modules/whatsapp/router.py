@@ -6,7 +6,7 @@ import uuid
 from fastapi import APIRouter, File, Header, Query, Request, UploadFile
 from starlette.responses import PlainTextResponse, Response, StreamingResponse
 
-from app.utils.deps import AIProtected, CurrentUser, SessionDep, TokenDep
+from app.utils.deps import AIProtected, CurrentUser, SessionDep
 
 from . import service
 from .events import whatsapp_event_broker
@@ -833,14 +833,13 @@ def create_conversation_ai_message(
     data: WhatsAppAiPrompt,
     session: SessionDep,
     current_user: CurrentUser,
-    token: TokenDep,
 ) -> WhatsAppAiResponse:
     prompt_message, assistant_message, response_text = service.create_ai_message(
         session=session,
         current_user=current_user,
         conversation_id=conversation_id,
         prompt=data.prompt,
-        auth_token=token,
+        actor_user_id=str(current_user.id),
     )
     return WhatsAppAiResponse(
         prompt_message=_message_response(prompt_message),

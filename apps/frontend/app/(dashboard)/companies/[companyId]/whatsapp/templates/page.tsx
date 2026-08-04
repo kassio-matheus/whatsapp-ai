@@ -162,7 +162,7 @@ function StatCard({
 }) {
   return (
     <Card
-      className="stagger-enter flex items-center gap-3 rounded-none p-3"
+      className="flex flex-row stagger-enter items-center gap-3 rounded-none p-3"
       style={{ animationDelay: `${delay}ms` }}
     >
       <div
@@ -173,8 +173,9 @@ function StatCard({
       >
         {icon}
       </div>
+
       <div className="min-w-0">
-        <p className="text-lg font-semibold leading-none">{value}</p>
+        <p className="text-lg leading-none font-semibold">{value}</p>
         <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
           {label}
         </p>
@@ -200,9 +201,8 @@ export default function TemplatesPage() {
   const [editing, setEditing] = React.useState<WhatsAppCloudApiTemplate | null>(
     null
   )
-  const [deleting, setDeleting] = React.useState<WhatsAppCloudApiTemplate | null>(
-    null
-  )
+  const [deleting, setDeleting] =
+    React.useState<WhatsAppCloudApiTemplate | null>(null)
 
   const cloudInstances = instances.filter(
     (instance) => instance.adapter === "whatsapp_cloud"
@@ -232,8 +232,6 @@ export default function TemplatesPage() {
           ? err.message
           : "Could not load Cloud API instances."
       )
-    } finally {
-      setLoading(false)
     }
   }, [params.companyId, token])
 
@@ -257,6 +255,7 @@ export default function TemplatesPage() {
       )
     } finally {
       setSyncing(false)
+      setLoading(false)
     }
   }, [instanceId, token])
 
@@ -485,6 +484,7 @@ export default function TemplatesPage() {
               {error}
             </div>
           ) : null}
+
           {visibleTemplates.length === 0 && !syncing ? (
             <EmptyState
               icon={<LayoutTemplate />}
@@ -497,6 +497,7 @@ export default function TemplatesPage() {
                 const category = CATEGORY_META[template.category ?? ""]
                 const quality = qualityScoreOf(template)
                 const summary = templateComponentSummary(template)
+                
                 return (
                   <Card
                     key={template.id}
@@ -597,7 +598,7 @@ export default function TemplatesPage() {
                         </p>
                       </div>
 
-                      {template.rejected_reason ? (
+                      {template.rejected_reason && template.rejected_reason !== "NONE" ? (
                         <p className="flex items-center gap-1.5 text-[11px] text-destructive">
                           <CircleAlert className="size-3 shrink-0" />
                           {template.rejected_reason}
@@ -617,10 +618,7 @@ export default function TemplatesPage() {
                         {quality ? (
                           <Badge
                             variant="outline"
-                            className={cn(
-                              "ms-auto text-[9px]",
-                              quality.chip
-                            )}
+                            className={cn("ms-auto text-[9px]", quality.chip)}
                           >
                             <CheckCircle2 className="size-3" />
                             {quality.label}
@@ -769,9 +767,10 @@ function TemplateDialog({
   const [body, setBody] = React.useState("")
   const [footer, setFooter] = React.useState("")
   const [buttons, setButtons] = React.useState<ButtonDraft[]>([])
-  const [preservedHeader, setPreservedHeader] = React.useState<
-    Record<string, unknown> | null
-  >(null)
+  const [preservedHeader, setPreservedHeader] = React.useState<Record<
+    string,
+    unknown
+  > | null>(null)
   const [pending, setPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 

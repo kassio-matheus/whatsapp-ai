@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -53,6 +56,13 @@ class Settings(BaseSettings):
     # then only use the pre-selected tools.
     AI_TOOL_ON_DEMAND: bool = True
 
+    # Internal secret used to authenticate requests originated by the AI agent
+    # (the MCP tool calls run against this API in-process). It replaces the
+    # user JWT: the AI is authorized natively, acting as the user referenced by
+    # ``X-AI-Actor``. When left empty it is derived from ``SECRET_KEY`` so the
+    # value is stable across restarts and unforgeable from outside.
+    AI_INTERNAL_SECRET: str = ""
+
     # Cloudflare R2 (S3-compatible) object storage
     R2_BUCKET_NAME: str = ""
     R2_ACCESS_KEY_ID: str = Field(
@@ -106,6 +116,22 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "SQLALCHEMY_DATABASE_URI is required in production")
         return self
+
+
+def ai_request_secret() -> str:
+    """Return the unforgeable secret used to tag AI-originated requests.
+
+    Prefers the explicitly configured ``AI_INTERNAL_SECRET``; otherwise derives
+    a stable value from ``SECRET_KEY`` so the in-process MCP client and the
+    auth dependencies always agree without any configuration.
+    """
+    if settings.AI_INTERNAL_SECRET:
+        return settings.AI_INTERNAL_SECRET
+    return hmac.new(
+        settings.SECRET_KEY.encode(),
+        b"ai-internal-request",
+        hashlib.sha256,
+    ).hexdigest()
 
 
 settings = Settings()

@@ -47,7 +47,7 @@ class FailoverLLM(AIPlatform):
         prompt: str,
         context: list[dict[str, str]] | None = None,
         system_prompt: str | None = None,
-        auth_token: str | None = None,
+        actor_user_id: str | None = None,
         allowed_tools: list[str] | None = None,
     ) -> ChatResponseStructure:
         if not self.providers:
@@ -61,7 +61,7 @@ class FailoverLLM(AIPlatform):
                     prompt=prompt,
                     context=context,
                     system_prompt=system_prompt,
-                    auth_token=auth_token,
+                    actor_user_id=actor_user_id,
                     allowed_tools=allowed_tools,
                 )
                 if not (result.response or "").strip():

@@ -31,7 +31,7 @@ function NotificationBell() {
   const [unread, setUnread] = React.useState(0)
   const [items, setItems] = React.useState<NotificationItem[]>([])
   const [open, setOpen] = React.useState(false)
-  const [loading, setLoading] = React.useState(false)
+  const [loading, setLoading] = React.useState(true)
   const [markingAll, setMarkingAll] = React.useState(false)
 
   const companyId = currentCompanyId ?? undefined
@@ -41,7 +41,10 @@ function NotificationBell() {
       return
     }
     try {
-      const { unread_count } = await api.unreadNotificationsCount(token, companyId)
+      const { unread_count } = await api.unreadNotificationsCount(
+        token,
+        companyId
+      )
       setUnread(unread_count)
     } catch {
       // The API may be briefly unavailable; keep the previous count.
@@ -50,12 +53,16 @@ function NotificationBell() {
 
   React.useEffect(() => {
     void refreshUnread()
-    const timer = window.setInterval(() => void refreshUnread(), POLL_INTERVAL_MS)
+    const timer = window.setInterval(
+      () => void refreshUnread(),
+      POLL_INTERVAL_MS
+    )
     return () => window.clearInterval(timer)
   }, [refreshUnread])
 
   const loadItems = React.useCallback(async () => {
     if (!token || !companyId) {
+      setItems([])
       return
     }
     setLoading(true)
@@ -67,7 +74,7 @@ function NotificationBell() {
       setItems(response.items)
       setUnread(response.unread_count)
     } catch {
-      // Keep whatever was already loaded.
+      // ...
     } finally {
       setLoading(false)
     }
@@ -104,90 +111,93 @@ function NotificationBell() {
   }, [token, companyId])
 
   return (
-    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="relative"
-            aria-label={
-              unread > 0
-                ? `${unread} unread notifications`
-                : "Notifications"
-            }
-          >
-            {unread > 0 ? (
-              <BellRing className="size-4" />
-            ) : (
-              <Bell className="size-4" />
-            )}
-            {unread > 0 ? (
-              <Badge className="pointer-events-none absolute -end-0.5 -top-0.5 size-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-semibold leading-none">
-                {unread > 99 ? "99+" : unread}
-              </Badge>
-            ) : null}
-          </Button>
-        }
-      />
-      <DropdownMenuContent
-        align="end"
-        sideOffset={6}
-        className="w-80 overflow-visible"
-      >
-        <DropdownMenuLabel className="flex items-center justify-between gap-2 pe-2">
-          <span className="text-xs font-medium text-foreground">
-            Notifications
-          </span>
-          {unread > 0 ? (
+    <DropdownMenuGroup>
+      <DropdownMenu open={open} onOpenChange={handleOpenChange}>
+        <DropdownMenuTrigger
+          render={
             <Button
               type="button"
               variant="ghost"
-              size="xs"
-              disabled={markingAll}
-              onClick={markAllRead}
+              size="icon"
+              className="relative"
+              aria-label={
+                unread > 0 ? `${unread} unread notifications` : "Notifications"
+              }
             >
-              <Check />
-              Mark all read
+              {unread > 0 ? (
+                <BellRing className="size-4" />
+              ) : (
+                <Bell className="size-4" />
+              )}
+              {unread > 0 ? (
+                <Badge className="pointer-events-none absolute -end-0.5 -top-0.5 size-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] leading-none font-semibold">
+                  {unread > 99 ? "99+" : unread}
+                </Badge>
+              ) : null}
             </Button>
-          ) : null}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <ScrollArea className="h-80 w-full">
-            {loading && items.length === 0 ? (
-              <div className="flex flex-col gap-2 p-3">
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-full" />
-              </div>
-            ) : items.length === 0 ? (
-              <div className="flex flex-col items-center gap-1 px-4 py-10 text-center">
-                <Bell className="size-5 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">
-                  No notifications yet.
-                </span>
-              </div>
-            ) : (
-              items.map((item) => (
-                <NotificationRow
-                  key={item.id}
-                  item={item}
-                  companyId={companyId}
-                  token={token}
-                  onMarkedRead={() => {
-                    setUnread((previous) =>
-                      previous > 0 && !item.is_read ? previous - 1 : previous
-                    )
-                  }}
-                />
-              ))
-            )}
-          </ScrollArea>
-        </DropdownMenuGroup>
-      </DropdownMenuContent>
-    </DropdownMenu>
+          }
+        />
+
+        <DropdownMenuContent
+          align="end"
+          sideOffset={6}
+          className="w-80 overflow-visible"
+        >
+          <DropdownMenuLabel className="flex items-center justify-between gap-2 pe-2">
+            <span className="text-xs font-medium text-foreground">
+              Notifications
+            </span>
+            {unread > 0 ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                disabled={markingAll}
+                onClick={markAllRead}
+              >
+                <Check />
+                Mark all read
+              </Button>
+            ) : null}
+          </DropdownMenuLabel>
+
+          <DropdownMenuSeparator />
+
+          <DropdownMenuGroup>
+            <ScrollArea className="h-80 w-full">
+              {loading == true && items.length === 0 ? (
+                <div className="flex flex-col gap-2 p-3">
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                </div>
+              ) : loading == false && items.length === 0 ? (
+                <div className="flex flex-col items-center gap-1 px-4 py-10 text-center">
+                  <Bell className="size-5 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">
+                    No notifications yet.
+                  </span>
+                </div>
+              ) : (
+                items.map((item) => (
+                  <NotificationRow
+                    key={item.id}
+                    item={item}
+                    companyId={companyId}
+                    token={token}
+                    onMarkedRead={() => {
+                      setUnread((previous) =>
+                        previous > 0 && !item.is_read ? previous - 1 : previous
+                      )
+                    }}
+                  />
+                ))
+              )}
+            </ScrollArea>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </DropdownMenuGroup>
   )
 }
 
@@ -228,9 +238,7 @@ function NotificationRow({
       <span
         className={cn(
           "mt-1 size-2 shrink-0 rounded-full",
-          item.is_read
-            ? "bg-transparent ring-1 ring-border"
-            : "bg-primary"
+          item.is_read ? "bg-transparent ring-1 ring-border" : "bg-primary"
         )}
         aria-hidden="true"
       />

@@ -4,7 +4,7 @@ from typing import Any, cast
 
 from mcp.types import CallToolResult
 from mcp.types import Tool as McpTool
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 from rich.syntax import Syntax
 
 from app.core.logging import console
@@ -17,6 +17,7 @@ from ..mcp import (
     selection_query_from_items,
 )
 from ..models import AIPlatform, ChatResponseStructure
+from .common import tool_name_from_validation_error
 
 TOOL_GUIDANCE = (
     "You are an agent integrated with this backend's own HTTP API. "
@@ -40,6 +41,47 @@ SCOPED_TOOL_GUIDANCE = (
 MAX_REMOTE_CALLS = 10
 
 
+async def create_response_with_tool_retry(
+    *,
+    client: Any,
+    input_items: list[dict[str, Any]],
+    instruction: str | None,
+    tool_definitions: list[dict[str, Any]],
+    toolset: ToolSet,
+    make_request_kwargs: Any,
+    to_tool_definition: Any,
+) -> Any:
+    """Call ``responses.create`` retrying tool-validation 400s.
+
+    The instruction text lists every tool (the catalog) while ``tools`` only
+    carries the BM25-selected subset, so a small model may call a tool that was
+    not declared in ``request.tools``. Providers (notably Groq) reject that
+    whole request with a 400. On retry the offending tool is ``ensure``d into
+    the toolset, declared in ``request.tools`` and the same input replayed.
+    ``tool_definitions`` is updated in place so the caller keeps the expanded
+    list. Other errors propagate unchanged.
+    """
+    for _ in range(MAX_REMOTE_CALLS):
+        kwargs = make_request_kwargs(
+            input_items=input_items,
+            instruction=instruction,
+            tool_definitions=tool_definitions,
+        )
+        try:
+            return await cast(Any, client.responses.create)(**kwargs)
+        except BadRequestError as exc:
+            missing = tool_name_from_validation_error(exc)
+            if missing is None or not toolset.ensure(missing):
+                raise
+            tool_definitions[:] = [
+                to_tool_definition(tool) for tool in toolset.tools()
+            ]
+            console.print(
+                f"[yellow]>>> TOOL (redeclared and retried): {missing}[/]"
+            )
+    raise RuntimeError("Tool validation retries exhausted")
+
+
 class OpenAI(AIPlatform):
     def __init__(
         self,
@@ -58,7 +100,7 @@ class OpenAI(AIPlatform):
         prompt: str,
         context: list[dict[str, str]] | None = None,
         system_prompt: str | None = None,
-        auth_token: str | None = None,
+        actor_user_id: str | None = None,
         allowed_tools: list[str] | None = None,
     ) -> ChatResponseStructure:
         input_items: list[dict[str, Any]] = []
@@ -88,7 +130,7 @@ class OpenAI(AIPlatform):
             self._generate_async(
                 input_items=input_items,
                 instruction=instruction,
-                auth_token=auth_token,
+                actor_user_id=actor_user_id,
                 allowed_tools=allowed_tools,
             )
         )
@@ -152,12 +194,12 @@ class OpenAI(AIPlatform):
         self,
         input_items: list[dict[str, Any]],
         instruction: str | None,
-        auth_token: str | None,
+        actor_user_id: str | None,
         allowed_tools: list[str] | None,
     ) -> ChatResponseStructure:
         async with (
             AsyncOpenAI(api_key=self.api_key) as client,
-            mcp_session(auth_token=auth_token) as session,
+            mcp_session(actor_user_id=actor_user_id) as session,
         ):
             mcp_tools = await get_tools(session)
             toolset = ToolSet(
@@ -171,12 +213,14 @@ class OpenAI(AIPlatform):
 
             failed_calls: dict[tuple[str, str], dict[str, object]] = {}
 
-            response = await cast(Any, client.responses.create)(
-                **self._request_kwargs(
-                    input_items=input_items,
-                    instruction=instruction,
-                    tool_definitions=tool_definitions,
-                )
+            response = await create_response_with_tool_retry(
+                client=client,
+                input_items=input_items,
+                instruction=instruction,
+                tool_definitions=tool_definitions,
+                toolset=toolset,
+                make_request_kwargs=self._request_kwargs,
+                to_tool_definition=self._to_openai_tool,
             )
 
             for _ in range(MAX_REMOTE_CALLS):
@@ -261,12 +305,14 @@ class OpenAI(AIPlatform):
                       for item in response.output],
                     *function_outputs,
                 ]
-                response = await cast(Any, client.responses.create)(
-                    **self._request_kwargs(
-                        input_items=input_items,
-                        instruction=instruction,
-                        tool_definitions=tool_definitions,
-                    )
+                response = await create_response_with_tool_retry(
+                    client=client,
+                    input_items=input_items,
+                    instruction=instruction,
+                    tool_definitions=tool_definitions,
+                    toolset=toolset,
+                    make_request_kwargs=self._request_kwargs,
+                    to_tool_definition=self._to_openai_tool,
                 )
 
             if not (response.output_text or "").strip():

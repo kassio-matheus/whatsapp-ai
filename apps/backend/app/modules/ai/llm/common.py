@@ -1,5 +1,8 @@
 """Shared helpers for the AI platform implementations."""
 
+import json
+import re
+
 from pydantic import ValidationError
 
 from ..models import ChatResponseStructure
@@ -100,6 +103,41 @@ def friendly_provider_error(exc: BaseException) -> str:
     if raw:
         return f"{_provider_name(root)} failed: {raw[:200]}"
     return f"{_provider_name(root)} failed"
+
+
+def tool_name_from_validation_error(exc: BaseException) -> str | None:
+    """Extract the offending tool name from a tool-validation 400.
+
+    Providers reject requests whose output references a tool that was not
+    declared in ``request.tools``. Groq reports the failed generation verbatim
+    (``{"name": ..., "arguments": ...}``) inside the error body; fall back to
+    scanning the message when that is missing. Returns ``None`` when the error
+    is not a tool-validation failure.
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            generation = error.get("failed_generation")
+            if isinstance(generation, str) and generation.strip():
+                try:
+                    parsed = json.loads(generation)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                else:
+                    if isinstance(parsed, dict):
+                        name = parsed.get("name")
+                        if isinstance(name, str) and name.strip():
+                            return name.strip()
+
+    message = _raw_message(exc)
+    match = re.search(r"tool '([^']+)' which was not in request\.tools", message)
+    if match:
+        return match.group(1)
+    match = re.search(r"function '([^']+)'", message)
+    if match:
+        return match.group(1)
+    return None
 
 
 def parse_chat_response(text: str) -> ChatResponseStructure:

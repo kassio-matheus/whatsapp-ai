@@ -8,6 +8,7 @@ the tool responses, matching Gemini's multi-turn function-calling contract.
 
 import asyncio
 import json
+import logging
 from typing import Any, ClassVar
 
 from google import genai
@@ -32,6 +33,8 @@ from .openai_llm import (
     TOOL_GUIDANCE,
     OpenAI,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class Gemini(AIPlatform):
@@ -162,15 +165,44 @@ class Gemini(AIPlatform):
         self,
         input_items: list[dict[str, str]],
         instruction: str | None,
-        auth_token: str | None,
+        actor_user_id: str | None,
         allowed_tools: list[str] | None,
     ) -> ChatResponseStructure:
         client = genai.Client(api_key=self.api_key)
+        try:
+            return await self._generate_with_client(
+                client=client,
+                input_items=input_items,
+                instruction=instruction,
+                actor_user_id=actor_user_id,
+                allowed_tools=allowed_tools,
+            )
+        finally:
+            # Explicitly close the client so the library never has to fall back
+            # to ``AsyncClient.__del__``, which schedules ``aclose()`` as a
+            # fire-and-forget task on the running loop. That task explodes with
+            # "Event loop is closed" when the loop (created by ``asyncio.run``)
+            # is torn down while the client is still alive.
+            client.close()
+            try:
+                await client.aio.aclose()
+            except Exception as exc:  # noqa: BLE001 - cleanup must never mask the result
+                _logger.debug("Gemini async client close failed: %s", exc)
+
+    async def _generate_with_client(
+        self,
+        *,
+        client: genai.Client,
+        input_items: list[dict[str, str]],
+        instruction: str | None,
+        actor_user_id: str | None,
+        allowed_tools: list[str] | None,
+    ) -> ChatResponseStructure:
         contents: list[types.Content] = [
             self._to_content(item) for item in input_items
         ]
 
-        async with mcp_session(auth_token=auth_token) as session:
+        async with mcp_session(actor_user_id=actor_user_id) as session:
             mcp_tools = await get_tools(session)
             toolset = ToolSet(
                 tools_by_name={tool.name: tool for tool in mcp_tools},

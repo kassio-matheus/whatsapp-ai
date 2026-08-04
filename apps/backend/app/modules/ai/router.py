@@ -19,7 +19,7 @@ from app.modules.ai.models import (
     SystemPromptUpdate,
 )
 from app.modules.whatsapp.service import _ensure_company_access
-from app.utils.deps import AIProtected, CurrentUser, SessionDep, TokenDep
+from app.utils.deps import AIProtected, CurrentUser, SessionDep
 
 router = APIRouter()
 
@@ -230,13 +230,12 @@ def chat(
     session_id: uuid.UUID,
     body: ChatRequest,
     current_user: CurrentUser,
-    token: TokenDep,
 ) -> ChatResponse:
     response_text = service.chat(
         session_id=session_id,
         user_id=current_user.id,
         prompt=body.prompt,
-        auth_token=token,
+        actor_user_id=str(current_user.id),
     )
     return ChatResponse(response=response_text, session_id=session_id)
 

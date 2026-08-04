@@ -31,7 +31,6 @@ from .service import (
     DEFAULT_AUTO_REPLY_SYSTEM_PROMPT,
     get_company_settings,
     get_conversation_ai_settings,
-    owner_access_token,
     resolve_scope,
     should_auto_reply,
 )
@@ -184,7 +183,7 @@ def _generate_and_send(
             prompt=message.content or "",
             context=context,
             system_prompt=system_prompt,
-            auth_token=owner_access_token(company),
+            actor_user_id=str(company.owner_id),
             allowed_tools=scope.allowed_tools,
         )
     except Exception as exc:  # noqa: BLE001 - deliver a graceful failure note

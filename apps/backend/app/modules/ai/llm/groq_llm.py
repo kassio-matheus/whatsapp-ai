@@ -18,6 +18,7 @@ from ..mcp import (
 )
 from ..models import AIPlatform, ChatResponseStructure
 from .common import parse_chat_response
+from .openai_llm import create_response_with_tool_retry
 
 #: A Groq expõe uma Responses API compatível com a da OpenAI (em beta) neste
 #: base_url, então reaproveitamos o SDK oficial `openai` em vez do pacote
@@ -83,7 +84,7 @@ class Groq(AIPlatform):
         prompt: str,
         context: list[dict[str, str]] | None = None,
         system_prompt: str | None = None,
-        auth_token: str | None = None,
+        actor_user_id: str | None = None,
         allowed_tools: list[str] | None = None,
     ) -> ChatResponseStructure:
         input_items: list[dict[str, Any]] = []
@@ -113,7 +114,7 @@ class Groq(AIPlatform):
             self._generate_async(
                 input_items=input_items,
                 instruction=instruction,
-                auth_token=auth_token,
+                actor_user_id=actor_user_id,
                 allowed_tools=allowed_tools,
             )
         )
@@ -193,13 +194,13 @@ class Groq(AIPlatform):
         self,
         input_items: list[dict[str, Any]],
         instruction: str | None,
-        auth_token: str | None,
+        actor_user_id: str | None,
         allowed_tools: list[str] | None,
     ) -> ChatResponseStructure:
         try:
             async with (
                 AsyncOpenAI(api_key=self.api_key, base_url=GROQ_BASE_URL) as client,
-                mcp_session(auth_token=auth_token) as session,
+                mcp_session(actor_user_id=actor_user_id) as session,
             ):
                 mcp_tools = await get_tools(session)
 
@@ -215,12 +216,14 @@ class Groq(AIPlatform):
                 failed_calls: dict[tuple[str, str],
                                    dict[str, object]] = {}
 
-                response = await cast(Any, client.responses.create)(
-                    **self._request_kwargs(
-                        input_items=input_items,
-                        instruction=instruction,
-                        tool_definitions=tool_definitions,
-                    )
+                response = await create_response_with_tool_retry(
+                    client=client,
+                    input_items=input_items,
+                    instruction=instruction,
+                    tool_definitions=tool_definitions,
+                    toolset=toolset,
+                    make_request_kwargs=self._request_kwargs,
+                    to_tool_definition=self._to_openai_tool,
                 )
 
                 for _ in range(MAX_REMOTE_CALLS):
@@ -310,12 +313,14 @@ class Groq(AIPlatform):
                           for item in response.output],
                         *function_outputs,
                     ]
-                    response = await cast(Any, client.responses.create)(
-                        **self._request_kwargs(
-                            input_items=input_items,
-                            instruction=instruction,
-                            tool_definitions=tool_definitions,
-                        )
+                    response = await create_response_with_tool_retry(
+                        client=client,
+                        input_items=input_items,
+                        instruction=instruction,
+                        tool_definitions=tool_definitions,
+                        toolset=toolset,
+                        make_request_kwargs=self._request_kwargs,
+                        to_tool_definition=self._to_openai_tool,
                     )
 
                 if not (response.output_text or "").strip():

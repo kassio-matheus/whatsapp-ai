@@ -15,10 +15,12 @@ from fastmcp import FastMCP
 from fastmcp.client.transports.memory import FastMCPTransport
 from mcp import ClientSession
 
-from app.core.config import settings
+import httpx
+
+from app.core.config import ai_request_secret, settings
+from app.utils.deps import AI_ACTOR_HEADER, AI_REQUEST_HEADER
 
 _backend_app: Any = None
-_mcp_server: FastMCP | None = None
 _tools_cache: list[Any] | None = None
 _tool_index: ToolRetriever | None = None
 _catalog_cache: list[dict[str, Any]] | None = None
@@ -35,12 +37,11 @@ _MCP_TOOL_METHODS = {"get", "post", "put", "patch", "delete"}
 
 
 def init_mcp(app: FastAPI) -> None:
-    global _backend_app, _mcp_server, _tools_cache, _tool_index, _catalog_cache
+    global _backend_app, _tools_cache, _tool_index, _catalog_cache
 
     _backend_app = app
 
     # invalida cache caso reload da aplicação aconteça
-    _mcp_server = None
     _tools_cache = None
     _tool_index = None
     _catalog_cache = None
@@ -415,25 +416,6 @@ def find_available_tools(query: str) -> list[dict[str, Any]]:
     ]
 
 
-def get_mcp_server() -> FastMCP:
-    global _mcp_server
-
-    if _backend_app is None:
-        raise RuntimeError(
-            "Backend MCP server not initialized."
-        )
-
-    if _mcp_server is None:
-
-        _mcp_server = FastMCP.from_fastapi(
-            app=_backend_app,
-            name="A.I Backend",
-            mcp_names=_mcp_names_map(),
-        )
-
-    return _mcp_server
-
-
 async def get_tools(session: ClientSession):
     global _tools_cache
 
@@ -449,14 +431,30 @@ async def get_tools(session: ClientSession):
 
 @asynccontextmanager
 async def mcp_session(
-    auth_token: str | None = None,
+    actor_user_id: str | None = None,
 ) -> AsyncIterator[ClientSession]:
+    """Open an in-process MCP session for one AI request.
 
-    server = get_mcp_server()
+    The AI is authorized natively, without a user JWT: every tool call issued
+    through this session is tagged with the server-side AI secret and the user
+    the agent is acting for (the company owner for WhatsApp auto-replies, the
+    dashboard user for the chat). The auth dependencies resolve the actor from
+    those headers instead of requiring a bearer token. A fresh server is built
+    per session so the scoped headers never leak between concurrent requests.
+    """
+    headers: dict[str, str] = {}
+    if actor_user_id is not None:
+        headers[AI_REQUEST_HEADER] = ai_request_secret()
+        headers[AI_ACTOR_HEADER] = actor_user_id
 
-    transport = FastMCPTransport(
-        mcp=server
+    server = FastMCP.from_fastapi(
+        app=_backend_app,
+        name="A.I Backend",
+        mcp_names=_mcp_names_map(),
+        httpx_client_kwargs={"headers": headers},
     )
+
+    transport = FastMCPTransport(mcp=server)
 
     async with transport.connect_session() as session:
 
