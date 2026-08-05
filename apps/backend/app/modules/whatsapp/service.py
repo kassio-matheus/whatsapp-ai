@@ -1609,12 +1609,14 @@ def create_ai_reply_message(
     conversation: WhatsAppConversation,
     content: str,
     reply_to_message: WhatsAppMessage | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> WhatsAppMessage:
     """Deliver the AI's reply to the contact through the integration adapter.
 
     Reuses the same delivery path as ``create_message`` for outbound messages,
     without requiring an authenticated user because replies are generated in a
-    background worker on behalf of the company.
+    background worker on behalf of the company. The stored message doubles as
+    the timeline record, so the AI's answer appears exactly once in the thread.
     """
     integration = session.get(WhatsAppIntegration, conversation.integration_id)
     if integration is None or not integration.is_active:
@@ -1622,9 +1624,11 @@ def create_ai_reply_message(
             status_code=404, detail="WhatsApp integration not found"
         )
     created_at = _now()
-    metadata: dict[str, Any] = {"ai_kind": "auto_reply"}
+    message_metadata: dict[str, Any] = {"ai_kind": "auto_reply"}
     if reply_to_message is not None:
-        metadata["reply_to_message_id"] = str(reply_to_message.id)
+        message_metadata["reply_to_message_id"] = str(reply_to_message.id)
+    if metadata:
+        message_metadata.update(metadata)
 
     external_id: str | None = None
     status = MessageStatus.SENT.value
@@ -1640,7 +1644,7 @@ def create_ai_reply_message(
         if contact is None:
             raise HTTPException(
                 status_code=404, detail="WhatsApp contact not found")
-        metadata["recipient_phone_number"] = contact.phone_number
+        message_metadata["recipient_phone_number"] = contact.phone_number
         pending_message = WhatsAppMessage(
             company_id=conversation.company_id,
             integration_id=conversation.integration_id,
@@ -1649,7 +1653,7 @@ def create_ai_reply_message(
             message_type="text",
             content=content,
             status=MessageStatus.PENDING.value,
-            metadata_json=metadata,
+            metadata_json=message_metadata,
             created_at=created_at,
             updated_at=created_at,
         )
@@ -1680,7 +1684,7 @@ def create_ai_reply_message(
         )
         sent_at = created_at
         if result.raw:
-            metadata["provider_response"] = result.raw
+            message_metadata["provider_response"] = result.raw
 
     message = WhatsAppMessage(
         company_id=conversation.company_id,
@@ -1691,7 +1695,7 @@ def create_ai_reply_message(
         message_type="text",
         content=content,
         status=status,
-        metadata_json=metadata,
+        metadata_json=message_metadata,
         sent_at=sent_at,
         created_at=created_at,
         updated_at=created_at,

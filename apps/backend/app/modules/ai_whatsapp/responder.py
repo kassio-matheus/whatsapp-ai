@@ -1,9 +1,10 @@
 """Background worker that answers inbound WhatsApp messages with the AI.
 
-Each reply is generated with an MCP session whose tool set depends on who sent
-the message (owner/trusted number -> every tool, contact -> whitelist). Replies
-are stored as an internal AI draft and delivered to the customer as a normal
-outbound message through whichever adapter the integration uses.
+Each reply is generated as a plain-text answer (no backend tools are exposed to
+the model, so it can never push its own copy of the message) and delivered to
+the customer as a normal outbound message through whichever adapter the
+integration uses. The delivered message doubles as the timeline record, so the
+answer appears exactly once in the thread.
 """
 
 from __future__ import annotations
@@ -62,11 +63,11 @@ def _already_answered(
 ) -> bool:
     """Whether an auto-reply was already stored for this inbound message.
 
-    An auto-reply is persisted twice (the internal ``ai`` draft and the
-    delivered ``text`` message), and both carry ``reply_to_message_id`` in
-    their metadata. Checking before generating makes the worker idempotent: a
-    message that was already answered (e.g. because the webhook was delivered
-    again or two workers raced) is never answered twice.
+    The delivered reply is a ``text`` message whose metadata carries
+    ``ai_kind=auto_reply`` and ``reply_to_message_id``. Checking before
+    generating makes the worker idempotent: a message that was already answered
+    (e.g. because the webhook was delivered again or two workers raced) is
+    never answered twice.
     """
     reference = str(message_id)
     candidates = session.exec(
@@ -90,16 +91,23 @@ def _already_answered(
 
 
 def _recent_context(
-    *, session: Session, conversation_id: uuid.UUID, limit: int = 30
+    *,
+    session: Session,
+    conversation_id: uuid.UUID,
+    exclude_message_id: uuid.UUID | None = None,
+    limit: int = 30,
 ) -> list[dict[str, str]]:
+    filters = [
+        WhatsAppMessage.conversation_id == conversation_id,
+        WhatsAppMessage.is_active == True,
+        ~WhatsAppMessage.message_type.in_(INTERNAL_MESSAGE_TYPES),
+        WhatsAppMessage.content.is_not(None),
+    ]
+    if exclude_message_id is not None:
+        filters.append(WhatsAppMessage.id != exclude_message_id)
     recent = session.exec(
         select(WhatsAppMessage)
-        .where(
-            WhatsAppMessage.conversation_id == conversation_id,
-            WhatsAppMessage.is_active == True,
-            ~WhatsAppMessage.message_type.in_(INTERNAL_MESSAGE_TYPES),
-            WhatsAppMessage.content.is_not(None),
-        )
+        .where(*filters)
         .order_by(desc(WhatsAppMessage.created_at))
         .limit(limit)
     ).all()
@@ -223,7 +231,11 @@ def _generate_and_send(
         parts.append(conversation_setting.system_prompt)
     system_prompt = "\n\n".join(parts)
 
-    context = _recent_context(session=session, conversation_id=conversation.id)
+    context = _recent_context(
+        session=session,
+        conversation_id=conversation.id,
+        exclude_message_id=message.id,
+    )
 
     from app.modules.ai.gateway import generate_for_company
 
@@ -238,7 +250,7 @@ def _generate_and_send(
             context=context,
             system_prompt=system_prompt,
             actor_user_id=str(company.owner_id),
-            allowed_tools=scope.allowed_tools,
+            allowed_tools=[],
         )
 
     except Exception as exc:  # noqa: BLE001 - deliver a graceful failure note
@@ -253,22 +265,22 @@ def _generate_and_send(
 
     response_text = result.response.strip()
     if not response_text:
+        _logger.warning(
+            "AI auto-reply returned an empty message for %s", message.id
+        )
+        whatsapp_service.create_ai_failure_note(
+            session=session,
+            conversation=conversation,
+            reason="AI returned an empty reply",
+            reply_to_message=message,
+        )
         return
 
-    draft_metadata = {
-        "ai_kind": "auto_reply",
-        "reply_to_message_id": str(message.id),
-        "mcp_scope": scope.as_dict(),
-    }
-    whatsapp_service.create_internal_ai_draft(
-        session=session,
-        conversation=conversation,
-        content=response_text,
-        metadata=draft_metadata,
-    )
+    reply_metadata = {"mcp_scope": scope.as_dict()}
     whatsapp_service.create_ai_reply_message(
         session=session,
         conversation=conversation,
         content=response_text,
         reply_to_message=message,
+        metadata=reply_metadata,
     )

@@ -6,10 +6,13 @@ can optionally override it (for example per-channel assistants) by storing
 their own keys; companies without an override fall back to the global row,
 then to the environment-configured chain.
 
-Keys are encrypted at rest using the app SECRET_KEY and are never returned by
-the API. The failover chain always follows the global order (DeepSeek ->
-OpenAI -> Gemini); a selected provider moves to the front, and only providers
-with a configured key are included.
+Keys are encrypted at rest and are never returned by the API. By default the
+app SECRET_KEY is used, but a dedicated ``AI_SETTINGS_ENCRYPTION_KEY`` can be
+set to the same value in every environment sharing the database, so keys saved
+in one environment survive restarts and deploys of the others. The failover
+chain always follows the global order (DeepSeek -> OpenAI -> Gemini); a
+selected provider moves to the front, and only providers with a configured key
+are included.
 """
 
 import base64
@@ -106,24 +109,56 @@ _CLASS_BY_PROVIDER = {
 GLOBAL_SETTINGS_ID = 1
 
 
-def _fernet() -> Fernet:
+def _fernet_from_secret(secret: str) -> Fernet:
     key = base64.urlsafe_b64encode(
-        hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).digest()
+        hashlib.sha256(secret.encode("utf-8")).digest()
     )
     return Fernet(key)
 
 
+def _encryption_secret() -> str:
+    return settings.AI_SETTINGS_ENCRYPTION_KEY or settings.SECRET_KEY
+
+
+def _decryption_secrets() -> list[str]:
+    secrets = [_encryption_secret()]
+    secrets += [
+        secret
+        for secret in settings.AI_SETTINGS_ENCRYPTION_KEYS
+        if secret and secret not in secrets
+    ]
+    # Keep reading keys written with the plain SECRET_KEY even after a
+    # dedicated AI settings key is configured, so rotation never orphans data.
+    if (
+        settings.SECRET_KEY
+        and settings.SECRET_KEY != _encryption_secret()
+        and settings.SECRET_KEY not in secrets
+    ):
+        secrets.append(settings.SECRET_KEY)
+    return secrets
+
+
 def encrypt_value(value: str) -> str:
-    return _fernet().encrypt(value.encode("utf-8")).decode("utf-8")
+    return (
+        _fernet_from_secret(_encryption_secret())
+        .encrypt(value.encode("utf-8"))
+        .decode("utf-8")
+    )
 
 
 def decrypt_value(value: str | None) -> str | None:
     if not value:
         return None
-    try:
-        return _fernet().decrypt(value.encode("utf-8")).decode("utf-8")
-    except Exception:  # noqa: BLE001 - tolerate keys encrypted with a stale secret
-        return None
+    for secret in _decryption_secrets():
+        try:
+            return (
+                _fernet_from_secret(secret)
+                .decrypt(value.encode("utf-8"))
+                .decode("utf-8")
+            )
+        except Exception:  # noqa: BLE001,S110 - try the next candidate key
+            pass
+    return None
 
 
 def _selected_provider(row: object | None) -> LLMProvider | None:

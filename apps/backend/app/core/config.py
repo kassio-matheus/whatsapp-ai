@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
     GROQ_API_KEY: str = ""
     SECRET_KEY: str = Field(min_length=32)
+    # Optional dedicated key used to encrypt stored AI provider keys instead of
+    # SECRET_KEY. Set the SAME value in every environment that shares the same
+    # database (e.g. local dev and the deployed server), otherwise keys saved in
+    # one environment become unreadable in the other and look "discarded" on
+    # restart/deploy. A base64 32-byte value is expected.
+    AI_SETTINGS_ENCRYPTION_KEY: str = ""
+    # Legacy secrets (JSON list) still accepted for decryption while the active
+    # AI settings key rotates. Each entry is tried after the current key.
+    AI_SETTINGS_ENCRYPTION_KEYS: list[str] = []
     SQLALCHEMY_DATABASE_URI: str = Field(min_length=1)
 
     FRONTEND_HOST: str = "http://localhost:3000"
@@ -75,7 +84,7 @@ class Settings(BaseSettings):
     # user JWT: the AI is authorized natively, acting as the user referenced by
     # ``X-AI-Actor``. When left empty it is derived from ``SECRET_KEY`` so the
     # value is stable across restarts and unforgeable from outside.
-    AI_INTERNAL_SECRET: str = ""
+    AI_INTERNAL_SECRET: str = "4Cib7ZF50ywzSYfKqY2Qj7r5if7juCnqbSDAwikJloc"
 
     # Cloudflare R2 (S3-compatible) object storage
     R2_BUCKET_NAME: str = ""

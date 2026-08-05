@@ -844,6 +844,7 @@ function MessageBubble({
   const isOutbound = message.direction === "outbound"
   const isNote = message.message_type === "note"
   const isAi = message.message_type === "ai"
+  const isAutoReply = message.metadata?.ai_kind === "auto_reply"
   const aiRole = isAi ? String(message.metadata?.role ?? "assistant") : null
 
   if (isNote || isAi) {
@@ -961,6 +962,12 @@ function MessageBubble({
             isOutbound ? "justify-end" : "justify-start"
           )}
         >
+          {isAutoReply ? (
+            <span className="flex items-center gap-0.5 font-medium text-primary">
+              <Bot className="size-3" />
+              AI
+            </span>
+          ) : null}
           <span>{formatDateTime(message.sent_at ?? message.created_at)}</span>
           <MessageStatusIcon message={message} />
         </div>
