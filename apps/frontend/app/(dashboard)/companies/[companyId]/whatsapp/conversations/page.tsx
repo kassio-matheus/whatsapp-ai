@@ -108,6 +108,17 @@ export default function ConversationsPage() {
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [messages, setMessages] = React.useState<WhatsAppMessage[]>([])
   const [messagesLoading, setMessagesLoading] = React.useState(false)
+
+  // Older auto-replies were stored twice (an internal "ai" draft plus the
+  // delivered text). Skip the internal drafts so the reply appears exactly
+  // once, while keeping the operator-initiated AI drafts ("You asked the AI").
+  const visibleMessages = messages.filter(
+    (message) =>
+      !(
+        message.message_type === "ai" &&
+        message.metadata?.ai_kind === "auto_reply"
+      )
+  )
   const [templates, setTemplates] = React.useState<WhatsAppCloudApiTemplate[]>(
     []
   )
@@ -175,7 +186,7 @@ export default function ConversationsPage() {
     if (stickToBottomRef.current) {
       scrollMessagesToBottom()
     }
-  }, [messages, scrollMessagesToBottom])
+  }, [visibleMessages, scrollMessagesToBottom])
 
   React.useEffect(() => {
     stickToBottomRef.current = true
@@ -353,7 +364,7 @@ export default function ConversationsPage() {
     if (!token) {
       return
     }
-    return subscribeToWhatsAppEvents({
+    const unsubscribe = subscribeToWhatsAppEvents({
       companyId,
       token,
       onEvent: (event) => {
@@ -366,6 +377,19 @@ export default function ConversationsPage() {
         }
       },
     })
+    // Polling fallback: SSE is process-local, so with multiple backend workers
+    // events may not reach this tab. A lightweight refresh keeps the inbox and
+    // the open conversation up to date either way.
+    const poll = window.setInterval(() => {
+      void loadConversations()
+      if (selectedId) {
+        void loadMessages(selectedId)
+      }
+    }, 10_000)
+    return () => {
+      unsubscribe()
+      window.clearInterval(poll)
+    }
   }, [companyId, loadConversations, loadMessages, selectedId, token])
 
   async function handleSendMessage(data: ComposerMessageData) {
@@ -712,12 +736,12 @@ export default function ConversationsPage() {
                       <div className="flex justify-center py-8 text-muted-foreground">
                         <LoaderCircle className="size-4 animate-spin" />
                       </div>
-                    ) : messages.length === 0 ? (
+                    ) : visibleMessages.length === 0 ? (
                       <p className="py-8 text-center text-xs text-muted-foreground">
                         No messages yet. Send the first one below.
                       </p>
                     ) : (
-                      messages.map((message) => (
+                      visibleMessages.map((message) => (
                         <MessageBubble
                           key={message.id}
                           message={message}

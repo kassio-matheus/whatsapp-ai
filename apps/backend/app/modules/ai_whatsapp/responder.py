@@ -276,6 +276,20 @@ def _generate_and_send(
         )
         return
 
+    # Second idempotency check right before delivery: generation can take a few
+    # seconds, and with multiple backend workers another process may have
+    # already delivered the reply in the meantime.
+    if _already_answered(
+        session=session,
+        conversation_id=conversation.id,
+        message_id=message.id,
+    ):
+        _logger.warning(
+            "Skipping duplicate AI auto-reply for message %s (delivered elsewhere)",
+            message.id,
+        )
+        return
+
     reply_metadata = {"mcp_scope": scope.as_dict()}
     whatsapp_service.create_ai_reply_message(
         session=session,
