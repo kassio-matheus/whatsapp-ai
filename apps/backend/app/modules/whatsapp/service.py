@@ -2225,16 +2225,20 @@ def process_meta_webhook(
                 conversation_id=conversation_id,
                 message_id=m_id,
             )
-        # for m_id, _, _, _ in inbound_message_ids:
-        #     # Imported lazily so the WhatsApp module does not depend on the AI
-        #     # module at import time. The responder re-validates eligibility and
-        #     # acts only when the company and conversation allow it. Scheduling
-        #     # is best-effort: a failure here must never break webhook ingestion.
-        #     try:
-        #         from app.modules.ai_whatsapp.service import process_inbound_message
 
-        #         process_inbound_message(session=session, message_id=m_id)
-        #     except Exception:
-        #         logger.exception(
-        #             "Failed to schedule AI auto-reply for %s", m_id)
+        for m_id, _, _, _ in inbound_message_ids:
+            print("Mensagem recebida, agendando resposta automática da IA")
+            print(m_id, inbound_message_ids)
+            # Imported lazily so the WhatsApp module does not depend on the AI
+            # module at import time. The responder re-validates eligibility and
+            # acts only when the company and conversation allow it. Scheduling
+            # is best-effort: a failure here must never break webhook ingestion.
+            try:
+                from app.modules.ai_whatsapp.service import process_inbound_message
+
+                process_inbound_message(session=session, message_id=m_id)
+            except Exception:
+                logger.exception(
+                    "Failed to schedule AI auto-reply for %s", m_id)
+
     return {"received": True, "processed": processed}
