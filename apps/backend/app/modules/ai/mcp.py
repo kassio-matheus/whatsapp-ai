@@ -90,6 +90,118 @@ def _route_requires_auth(path: str) -> bool:
     )
 
 
+# ---------------------------------------------------------------------------
+# Tool recipes: required fields + prerequisite lookups
+#
+# Small models know *which* tool to call but not *what* to send and *what to
+# call first*. We derive both from the OpenAPI schema:
+#   - ``required``: the JSON-schema required field names of the tool;
+#   - ``requires``: safe GET tools that can resolve the foreign ids among those
+#     required fields (e.g. ``company_id`` -> ``list_companies``), so the model
+#     is told to look the value up instead of inventing it.
+# These hints are rendered into the catalog and drive the transitive preload in
+# ``ToolSet``, so prerequisite reads are always available in the toolset.
+# ---------------------------------------------------------------------------
+
+#: Max number of prerequisite tools attached to a single tool.
+_MAX_PREREQUISITES = 2
+
+_ID_SUFFIXES = ("_uuid", "_id")
+
+
+def _required_fields(schema: dict[str, Any] | None) -> list[str]:
+    if not isinstance(schema, dict):
+        return []
+    required = schema.get("required")
+    if isinstance(required, list):
+        return [str(name) for name in required if isinstance(name, str)]
+    return []
+
+
+def _pluralize(resource: str) -> str:
+    if resource.endswith("y"):
+        return resource[:-1] + "ies"
+    if resource.endswith("s"):
+        return resource
+    return resource + "s"
+
+
+def _foreign_id_fields(required: list[str]) -> list[str]:
+    fields: list[str] = []
+    for name in required:
+        if any(name.endswith(suffix) for suffix in _ID_SUFFIXES):
+            fields.append(name)
+    return fields
+
+
+def _resource_names(field: str) -> list[str]:
+    """Map a foreign id field to plausible path resource names.
+
+    ``company_id`` -> ``["company", "companies"]``. ``conversation_id`` ->
+    ``["conversation", "conversations"]``. Also strips a leading ``contact_`` /
+    ``target_`` style prefix if present so ``conversation_id`` still matches
+    ``/conversations/...``.
+    """
+    name = field
+    for suffix in _ID_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    for prefix in ("contact_", "target_", "source_", "primary_", "owner_"):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    names = {name, _pluralize(name)}
+    if not name.endswith("s"):
+        names.add(name + "es")
+    return sorted(names)
+
+
+def _prerequisite_tools(
+    tool: dict[str, Any], tools: list[dict[str, Any]]
+) -> list[str]:
+    """Find safe GET tools that can resolve the foreign ids a tool requires."""
+    method = (tool.get("method") or "GET").upper()
+    if method in {"GET", "HEAD"}:
+        return []
+    resources = set()
+    for field in _foreign_id_fields(_required_fields(
+            tool.get("input_schema"))):
+        resources.update(_resource_names(field))
+
+    if not resources:
+        return []
+
+    prerequisites: list[str] = []
+    for candidate in tools:
+        if (candidate.get("method") or "GET").upper() not in {"GET", "HEAD"}:
+            continue
+        if candidate["name"] == tool["name"]:
+            continue
+        path = candidate.get("path") or ""
+        summary = (candidate.get("summary") or "").lower()
+        if any(f"/{resource}" in path.lower() for resource in resources) or any(
+            resource.lower() in summary for resource in resources
+        ):
+            prerequisites.append(candidate["name"])
+            if len(prerequisites) >= _MAX_PREREQUISITES:
+                break
+    return prerequisites
+
+
+def _tool_recipes(tools: list[dict[str, Any]]) -> tuple[
+    dict[str, list[str]], dict[str, list[str]]
+]:
+    """Return ``(required_by_name, requires_by_name)`` for a tool list."""
+    required_by_name: dict[str, list[str]] = {}
+    requires_by_name: dict[str, list[str]] = {}
+    for tool in tools:
+        required = _required_fields(tool.get("input_schema"))
+        required_by_name[tool["name"]] = required
+        requires_by_name[tool["name"]] = _prerequisite_tools(tool, tools)
+    return required_by_name, requires_by_name
+
+
 def list_mcp_tools() -> list[dict[str, Any]]:
     if _backend_app is None:
         return []
@@ -123,6 +235,25 @@ def list_mcp_tools() -> list[dict[str, Any]]:
 
             summary = operation.get("summary")
 
+            input_schema = operation.get("requestBody", {}).get(
+                "content", {}
+            ).get("application/json", {}).get("schema")
+            if not isinstance(input_schema, dict):
+                input_schema = None
+
+            required: list[str] = []
+            for parameter in operation.get("parameters", []):
+                if (
+                    parameter.get("required")
+                    and isinstance(parameter.get("name"), str)
+                    and parameter["name"]
+                ):
+                    required.append(parameter["name"])
+            if input_schema:
+                for name in _required_fields(input_schema):
+                    if name not in required:
+                        required.append(name)
+
             tools.append(
                 {
                     "name": name,
@@ -135,8 +266,15 @@ def list_mcp_tools() -> list[dict[str, Any]]:
                         or ""
                     ),
                     "requires_auth": _route_requires_auth(path),
+                    "input_schema": input_schema,
+                    "required": required,
                 }
             )
+
+    _required, _requires = _tool_recipes(tools)
+    for tool in tools:
+        tool["required"] = _required.get(tool["name"], [])
+        tool["requires"] = _requires.get(tool["name"], [])
 
     return tools
 
@@ -419,9 +557,17 @@ def build_tool_catalog(
 
         if len(summary) > 90:
             summary = summary[:87].rstrip() + "..."
-        lines.append(
-            f"- {tool['name']}: {summary}" if summary else f"- {tool['name']}"
-        )
+        line = f"- {tool['name']}: {summary}" if summary else f"- {tool['name']}"
+
+        required = tool.get("required") or []
+        if required:
+            line += f" | required: {', '.join(required)}"
+
+        requires = tool.get("requires") or []
+        if requires:
+            line += f" | first call: {', '.join(requires)}"
+
+        lines.append(line)
 
     return (
         "Available tools (call a tool only when strictly needed, by its exact "

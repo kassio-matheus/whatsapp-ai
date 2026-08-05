@@ -149,6 +149,8 @@ def list_company_ai_mcp_tools(
                 summary=tool["summary"],
                 description=tool["description"],
                 requires_auth=tool["requires_auth"],
+                required=tool.get("required") or [],
+                requires=tool.get("requires") or [],
             )
             for tool in list_mcp_tools()
         ],

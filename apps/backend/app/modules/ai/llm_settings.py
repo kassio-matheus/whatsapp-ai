@@ -144,6 +144,9 @@ def _provider_reasoning(
 
     Gemini understands ``MINIMAL|LOW|MEDIUM|HIGH``; OpenAI accepts
     ``minimal|low|medium|high``; DeepSeek only accepts ``low|high|max``.
+    Groq only accepts ``low|medium|high`` (no ``minimal``/``max``), so the
+    levels are clamped; sending an invalid effort makes Groq reject the whole
+    request with a 400 and the provider is skipped forever in failover.
     """
     if provider == LLMProvider.GEMINI:
         return level.value.upper()
@@ -154,22 +157,37 @@ def _provider_reasoning(
             ReasoningLevel.MEDIUM: "high",
             ReasoningLevel.HIGH: "max",
         }[level]
+    if provider == LLMProvider.GROQ:
+        return {
+            ReasoningLevel.MINIMAL: "low",
+            ReasoningLevel.LOW: "low",
+            ReasoningLevel.MEDIUM: "medium",
+            ReasoningLevel.HIGH: "high",
+        }[level]
     return level.value
+
+
+def _default_reasoning() -> ReasoningLevel:
+    """The reasoning level used when nothing overrides it (speed-friendly)."""
+    try:
+        return ReasoningLevel(settings.AI_DEFAULT_REASONING_LEVEL)
+    except ValueError:
+        return ReasoningLevel.MINIMAL
 
 
 def _reasoning_by_provider(
     row: object | None,
 ) -> dict[LLMProvider, ReasoningLevel]:
-    """Per-provider thinking power, falling back to ``MEDIUM``."""
+    """Per-provider thinking power, falling back to the default level."""
     levels: dict[LLMProvider, ReasoningLevel] = {}
+    default = _default_reasoning()
     for provider in PROVIDER_ORDER:
         value = getattr(row, _PROVIDER_REASONING_ATTR[provider],
                         None) if row is not None else None
         try:
-            levels[provider] = ReasoningLevel(value) if value \
-                else ReasoningLevel.MEDIUM
+            levels[provider] = ReasoningLevel(value) if value else default
         except ValueError:
-            levels[provider] = ReasoningLevel.MEDIUM
+            levels[provider] = default
     return levels
 
 
@@ -256,7 +274,7 @@ def _chain_from_keys(
         cls = _CLASS_BY_PROVIDER[provider]
         provider_reasoning = _provider_reasoning(
             provider,
-            reasoning.get(provider, ReasoningLevel.MEDIUM),
+            reasoning.get(provider, _default_reasoning()),
         )
         provider_thinking = supports_thinking.get(provider, True)
         if provider == LLMProvider.GEMINI:
@@ -372,13 +390,21 @@ def global_settings_response(*, row: AIGlobalSettings) -> AIGlobalSettingsRespon
 
 
 def build_global_llm(*, session: Session | None = None) -> AIPlatform:
-    """Build the platform default chain (global row, then environment keys)."""
+    """Build the platform default chain (global row, then environment keys).
+
+    Stored row keys win, but any provider only configured through environment
+    variables is still added, so a provider such as Groq configured in the env
+    is never silently dropped just because another provider's key happens to be
+    stored in the global settings row.
+    """
     row = None
     if session is not None:
         row = session.get(AIGlobalSettings, GLOBAL_SETTINGS_ID)
     keys = _stored_keys(row)
-    if not keys:
-        keys = _env_keys()
+    env_keys = _env_keys()
+    for provider in PROVIDER_ORDER:
+        if provider not in keys and provider in env_keys:
+            keys[provider] = env_keys[provider]
     return FailoverLLM(providers=_chain_from_row(row=row, keys=keys))
 
 

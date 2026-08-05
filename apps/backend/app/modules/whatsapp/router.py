@@ -6,7 +6,7 @@ import uuid
 from fastapi import APIRouter, File, Header, Query, Request, UploadFile
 from starlette.responses import PlainTextResponse, Response, StreamingResponse
 
-from app.utils.deps import AIProtected, CurrentUser, SessionDep
+from app.utils.deps import CurrentUser, SessionDep
 
 from . import service
 from .events import whatsapp_event_broker

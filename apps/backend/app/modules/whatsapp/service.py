@@ -1,4 +1,33 @@
-from .phone_numbers import format_phone_number_for_meta
+import datetime
+import hmac
+import json
+import logging
+import re
+import uuid
+from pathlib import Path
+from typing import Any, cast
+
+from fastapi import HTTPException, UploadFile
+from pydantic import ValidationError
+from sqlalchemy import asc, desc
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, select
+
+from app.core.config import settings
+from app.core.r2 import R2Error, R2Object, r2
+from app.modules.auth.models import User
+from app.modules.companies.models import Company
+
+from .adapters import whatsapp_adapter_registry
+from .cloud_api import (
+    META_CLOUD_API_ADAPTER,
+    CloudApiConnectionInfo,
+    MediaDownload,
+    MetaCloudApiClient,
+    MetaCloudApiError,
+    verify_webhook_signature,
+)
+from .events import whatsapp_event_broker
 from .models import (
     INTERNAL_MESSAGE_TYPES,
     IntegrationType,
@@ -23,36 +52,7 @@ from .models import (
     WhatsAppMessageCreate,
     WhatsAppMessageUpdate,
 )
-from .events import whatsapp_event_broker
-from .cloud_api import (
-    META_CLOUD_API_ADAPTER,
-    CloudApiConnectionInfo,
-    MediaDownload,
-    MetaCloudApiClient,
-    MetaCloudApiError,
-    verify_webhook_signature,
-)
-from .adapters import whatsapp_adapter_registry
-import datetime
-import hmac
-import json
-import logging
-import re
-import uuid
-from pathlib import Path
-from typing import Any, cast
-
-from fastapi import HTTPException, UploadFile
-from pydantic import ValidationError
-from sqlalchemy import asc, desc
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
-
-from app.core.config import settings
-from app.core.r2 import R2Error, R2Object, r2
-from app.modules.auth.models import User
-from app.modules.companies.models import Company
-from app.modules.ai.llm_settings import build_global_llm
+from .phone_numbers import format_phone_number_for_meta
 
 logger = logging.getLogger(__name__)
 
@@ -1463,10 +1463,11 @@ def create_ai_message(
     )
 
     # Imported lazily to keep the WhatsApp module decoupled from the AI stack.
+    from app.modules.ai.gateway import generate_for_company
     from app.modules.ai.llm.common import friendly_provider_error
-    from app.modules.ai.service import llm
 
     integration = session.get(WhatsAppIntegration, conversation.integration_id)
+    company = session.get(Company, conversation.company_id)
 
     system_prompt = (
         "You are an AI assistant embedded in a customer-support WhatsApp inbox. "
@@ -1479,13 +1480,14 @@ def create_ai_message(
         f"Chat info: {conversation}, user: {current_user}, session/integration: {integration}"
     )
     try:
-        llm = build_global_llm(session=session)
-
-        result = llm.generate(
+        result = generate_for_company(
+            session=session,
+            company=company,
+            owner=current_user,
             prompt=prompt,
             context=context,
             system_prompt=system_prompt,
-            actor_user_id=actor_user_id,
+            actor_user_id=actor_user_id or str(current_user.id),
         )
 
     except Exception as exc:

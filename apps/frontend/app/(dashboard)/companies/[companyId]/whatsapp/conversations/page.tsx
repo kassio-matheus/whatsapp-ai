@@ -38,6 +38,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { PageHeader } from "@/components/ui/page-header"
 import { ConversationDialog } from "@/components/whatsapp/conversation-dialog"
+import { compactPrompt } from "@/lib/token-saver"
 import {
   MessageComposer,
   type ComposerMessageData,
@@ -401,7 +402,7 @@ export default function ConversationsPage() {
     }
     setAiPending(true)
     try {
-      const result = await api.askAi(selectedId, prompt, token)
+      const result = await api.askAi(selectedId, compactPrompt(prompt), token)
       setMessages((previous) => [
         ...previous,
         result.prompt_message,

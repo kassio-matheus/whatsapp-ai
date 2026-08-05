@@ -17,6 +17,7 @@ from sqlalchemy import desc
 from sqlmodel import Session, select
 
 from app.core.db import engine
+from app.modules.auth.models import User
 from app.modules.companies.models import Company
 from app.modules.whatsapp import service as whatsapp_service
 from app.modules.whatsapp.models import (
@@ -128,6 +129,7 @@ def _process(message_id: uuid.UUID) -> None:
             return
 
         lock = _conversation_lock(conversation.id)
+        
         if not lock.acquire(blocking=False):
             return
         try:
@@ -177,12 +179,15 @@ def _generate_and_send(
 
     context = _recent_context(session=session, conversation_id=conversation.id)
 
-    from app.modules.ai.llm_settings import build_global_llm
+    from app.modules.ai.gateway import generate_for_company
+
+    owner = session.get(User, company.owner_id) if company.owner_id else None
 
     try:
-        result = build_global_llm(
-            session=session
-        ).generate(
+        result = generate_for_company(
+            session=session,
+            company=company,
+            owner=owner,
             prompt=message.content or "",
             context=context,
             system_prompt=system_prompt,
@@ -190,7 +195,6 @@ def _generate_and_send(
             allowed_tools=scope.allowed_tools,
         )
 
-        print(result.response)
     except Exception as exc:  # noqa: BLE001 - deliver a graceful failure note
         _logger.warning("AI auto-reply generation failed: %s", exc)
         whatsapp_service.create_ai_failure_note(

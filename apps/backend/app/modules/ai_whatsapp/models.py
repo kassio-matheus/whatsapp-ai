@@ -156,6 +156,14 @@ class McpToolInfo(BaseModel):
     requires_auth: bool = Field(
         description="Whether the route needs a bearer token."
     )
+    required: list[str] = Field(
+        default_factory=list,
+        description="Field names the request body requires.",
+    )
+    requires: list[str] = Field(
+        default_factory=list,
+        description="Tool names to call first to resolve required ids.",
+    )
 
 
 class McpToolsPage(BaseModel):

@@ -20,17 +20,20 @@ from app.core.logging import console
 
 from ..mcp import (
     ToolSet,
-    build_tool_catalog,
     get_tools,
     mcp_session,
     selection_query_from_items,
 )
 from ..models import AIPlatform, ChatResponseStructure
+from ..token_saver import (
+    compact_prompt,
+    model_context_budget,
+    trim_context,
+)
 from .common import parse_chat_response
+from .guidance import build_instruction
 from .openai_llm import (
     MAX_REMOTE_CALLS,
-    SCOPED_TOOL_GUIDANCE,
-    TOOL_GUIDANCE,
     OpenAI,
 )
 
@@ -60,6 +63,13 @@ class Gemini(AIPlatform):
         actor_user_id: str | None = None,
         allowed_tools: list[str] | None = None,
     ) -> ChatResponseStructure:
+        budget = model_context_budget(self.model)
+        context = trim_context(context, max_tokens=budget)
+        prompt = compact_prompt(
+            prompt,
+            max_tokens=max(1, round(budget / 3)),
+        )
+
         input_items: list[dict[str, Any]] = []
 
         if context:
@@ -73,15 +83,10 @@ class Gemini(AIPlatform):
 
         input_items.append({"role": "user", "content": prompt})
 
-        parts = [TOOL_GUIDANCE]
-        if allowed_tools is not None:
-            parts.append(SCOPED_TOOL_GUIDANCE)
-        catalog = build_tool_catalog(allowed_tools=allowed_tools)
-        if catalog:
-            parts.append(catalog)
-        if system_prompt:
-            parts.append(system_prompt)
-        instruction = "\n\n".join(parts)
+        instruction, _ = build_instruction(
+            system_prompt=system_prompt,
+            allowed_tools=allowed_tools,
+        )
 
         return asyncio.run(
             self._generate_async(

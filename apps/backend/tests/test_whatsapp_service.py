@@ -205,9 +205,16 @@ def test_whatsapp_ai_message_is_stored_but_never_delivered(database, monkeypatch
         def generate(self, *, prompt, context, system_prompt=None, auth_token=None):
             return type("Result", (), {"response": "Draft reply: sounds good!"})()
 
+    def fake_generate(**kwargs):
+        return FakeLLM().generate(
+            prompt=kwargs.get("prompt", ""),
+            context=kwargs.get("context") or [],
+            system_prompt=kwargs.get("system_prompt"),
+        )
+
     monkeypatch.setattr(
-        "app.modules.ai.service.llm",
-        FakeLLM(),
+        "app.modules.ai.gateway.generate",
+        fake_generate,
     )
 
     with Session(database) as session:

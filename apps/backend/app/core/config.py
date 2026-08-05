@@ -56,6 +56,20 @@ class Settings(BaseSettings):
     # then only use the pre-selected tools.
     AI_TOOL_ON_DEMAND: bool = True
 
+    # Token-saving budgets (in characters, rough 1 token ~= 4 chars). The AI
+    # gateway trims conversation history, the system prompt and the user prompt
+    # down to these ceilings before the request leaves the backend. They exist
+    # because the small (~8B) models this stack targets have tight context
+    # windows and degrade when flooded with irrelevant history.
+    AI_CONTEXT_BUDGET_TOKENS: int = 3500
+    AI_PROMPT_BUDGET_TOKENS: int = 1200
+    AI_SYSTEM_BUDGET_TOKENS: int = 1500
+    # How many recent turns are kept from the conversation history at most.
+    AI_MAX_CONTEXT_TURNS: int = 12
+    # Reasoning level used when neither the company nor the global settings
+    # override it. Lower values cut latency at the cost of some "thinking".
+    AI_DEFAULT_REASONING_LEVEL: str = "minimal"
+
     # Internal secret used to authenticate requests originated by the AI agent
     # (the MCP tool calls run against this API in-process). It replaces the
     # user JWT: the AI is authorized natively, acting as the user referenced by

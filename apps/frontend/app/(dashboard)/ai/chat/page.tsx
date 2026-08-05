@@ -40,6 +40,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Markdown } from "@/components/ui/markdown"
 import { PageHeader } from "@/components/ui/page-header"
+import { compactPrompt } from "@/lib/token-saver"
 import {
   api,
   ApiClientError,
@@ -132,7 +133,7 @@ export default function AIPage() {
 
   async function handleSend(event: React.FormEvent) {
     event.preventDefault()
-    const content = prompt.trim()
+    const content = compactPrompt(prompt)
     if (!token || !selectedId || !content || sending) {
       return
     }

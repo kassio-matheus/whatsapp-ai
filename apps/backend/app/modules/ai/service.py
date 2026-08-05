@@ -12,8 +12,8 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.db import engine
 from app.core.r2 import R2Error, r2
+from app.modules.ai.gateway import generate_for_user
 from app.modules.ai.llm.common import friendly_provider_error
-from app.modules.ai.llm_settings import build_global_llm, build_llm_for_user
 from app.modules.ai.models import ChatFile, ChatSession, Message
 from app.modules.auth.models import User
 
@@ -25,8 +25,6 @@ _ALLOWED_UPLOADS = {
     "image/png": {".png"},
     "text/plain": {".txt"},
 }
-
-llm = build_global_llm()
 
 
 def _expires_at() -> datetime.datetime:
@@ -244,16 +242,15 @@ def chat(
             context.append({"role": m.role, "content": m.content})
 
         user = session.get(User, user_id)
-        company_llm = (
-            build_llm_for_user(session=session, user=user) if user else llm
-        )
 
         try:
-            result = company_llm.generate(
+            result = generate_for_user(
+                session=session,
+                user=user,
                 prompt=prompt,
                 context=context,
                 system_prompt=chat_session.system_prompt,
-                actor_user_id=actor_user_id,
+                actor_user_id=actor_user_id or str(user_id),
             )
         except HTTPException:
             raise

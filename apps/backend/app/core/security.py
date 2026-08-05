@@ -8,7 +8,6 @@ import jwt
 
 from app.core.config import settings
 
-
 ALGORITHM = "HS256"
 ACCESS_TOKEN_PURPOSE = "access"
 EMAIL_VERIFICATION_PURPOSE = "email_verification"
