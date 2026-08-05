@@ -4,6 +4,7 @@ import logging
 import math
 import re
 import threading
+import unicodedata
 from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -324,10 +325,111 @@ _STOPWORDS = frozenset(
 )
 
 
+#: Portuguese -> English term aliases used by the BM25 tokenizer. Both languages
+#: collapse onto the same canonical English stem, so a query written in Brazilian
+#: Portuguese (e.g. ``conversas``) surfaces the English-named MCP tools (e.g.
+#: ``list_conversations``) that would otherwise never match. Singular and plural
+#: forms are listed explicitly to avoid a fragile custom stemmer.
+_PT_EN_TERMS: dict[str, str] = {
+    # message
+    "mensagem": "message", "mensagens": "message", "msg": "message",
+    "messages": "message",
+    # conversation / atendimento
+    "conversa": "conversation", "conversas": "conversation",
+    "conversacao": "conversation", "conversacoes": "conversation",
+    "conversar": "conversation", "atendimento": "conversation",
+    "atendimentos": "conversation", "conversations": "conversation",
+    # contact / cliente
+    "contato": "contact", "contatos": "contact",
+    "cliente": "contact", "clientes": "contact", "contacts": "contact",
+    # integration / instance
+    "integracao": "integration", "integracoes": "integration",
+    "instancia": "integration", "instancias": "integration",
+    "integrations": "integration", "instances": "integration",
+    # company
+    "empresa": "company", "empresas": "company", "companies": "company",
+    # session
+    "sessao": "session", "sessoes": "session", "sessions": "session",
+    # notification
+    "notificacao": "notification", "notificacoes": "notification",
+    "aviso": "notification", "avisos": "notification",
+    "notifications": "notification",
+    # template
+    "modelo": "template", "modelos": "template", "mensagemmodelo": "template",
+    "templates": "template",
+    # member / staff
+    "membro": "member", "membros": "member", "funcionario": "member",
+    "funcionarios": "member", "members": "member",
+    # send
+    "enviar": "send", "envio": "send", "enviado": "send", "enviada": "send",
+    "enviados": "send", "enviadas": "send", "envie": "send",
+    # schedule
+    "agendar": "schedule", "agendamento": "schedule",
+    "agendamentos": "schedule", "horario": "schedule", "horarios": "schedule",
+    # price
+    "preco": "price", "precos": "price", "valor": "price", "valores": "price",
+    "prices": "price",
+    # payment
+    "pagamento": "payment", "pagamentos": "payment", "pagar": "payment",
+    "payments": "payment",
+    # report
+    "relatorio": "report", "relatorios": "report", "reports": "report",
+    # invoice / fatura
+    "fatura": "invoice", "faturas": "invoice", "notafiscal": "invoice",
+    "invoices": "invoice",
+    # address
+    "endereco": "address", "enderecos": "address", "addresses": "address",
+    # order / pedido
+    "pedido": "order", "pedidos": "order", "orders": "order",
+    # delivery
+    "entrega": "delivery", "entregas": "delivery", "entregar": "delivery",
+    "deliveries": "delivery",
+    # open / close
+    "abrir": "open", "aberta": "open", "aberto": "open", "abertos": "open",
+    "abertas": "open", "fechar": "close", "fechada": "close",
+    "fechado": "close", "fechados": "close", "fechadas": "close",
+    # ai / chat
+    "ia": "ai", "inteligencia": "ai", "assistente": "ai",
+    "batepapo": "chat",
+    # whatsapp
+    "zap": "whatsapp", "zapzap": "whatsapp", "whats": "whatsapp",
+    # phone / number
+    "numero": "number", "numeros": "number", "telefone": "number",
+    "telefones": "number", "numbers": "number", "phones": "number",
+    # media
+    "imagem": "media", "imagens": "media", "foto": "media", "fotos": "media",
+    "video": "media", "videos": "media", "audio": "media",
+    "documento": "media", "documentos": "media",
+    "images": "media", "documents": "media",
+    # search / list
+    "buscar": "search", "busca": "search", "pesquisar": "search",
+    "pesquisa": "search", "localizar": "search", "procurar": "search",
+    "listar": "list", "listagem": "list", "lista": "list",
+    # help / support
+    "ajuda": "help", "ajudar": "help", "suporte": "help", "assistencia": "help",
+    # status
+    "estado": "status", "situacao": "status",
+}
+
+
+def _normalize_ascii(text: str) -> str:
+    """Strip accents so Portuguese and English words share the same tokens.
+
+    Without this the token regex splits accented words (``integracao`` -> the
+    ``c`` and the following bound in ``[a-z0-9]``), so ``integracao`` never
+    matches an English description. Removing combining marks turns both into
+    plain ASCII before tokenization.
+    """
+    return unicodedata.normalize("NFKD", text).encode(
+        "ascii", "ignore"
+    ).decode("ascii")
+
+
 def _tokenize(text: str) -> list[str]:
+    tokens = _TOKEN_RE.findall(_normalize_ascii(text).lower())
     return [
-        token
-        for token in _TOKEN_RE.findall(text.lower())
+        _PT_EN_TERMS.get(token, token)
+        for token in tokens
         if token not in _STOPWORDS and len(token) > 1
     ]
 

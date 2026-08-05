@@ -41,6 +41,11 @@ _logger = logging.getLogger(__name__)
 #: Number of background workers generating WhatsApp replies.
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ai-whatsapp")
 
+#: How long a task waits for the per-conversation lock before giving up. The
+#: lock queues concurrent replies for the same chat instead of dropping them,
+#: so a customer who sends two messages in a row gets both answered.
+_LOCK_TIMEOUT_SECONDS = 60
+
 _LOCKS_GUARD = threading.Lock()
 _LOCKS: dict[uuid.UUID, threading.Lock] = {}
 
@@ -50,6 +55,38 @@ def _conversation_lock(conversation_id: uuid.UUID) -> threading.Lock:
     with _LOCKS_GUARD:
         lock = _LOCKS.setdefault(conversation_id, threading.Lock())
     return lock
+
+
+def _already_answered(
+    *, session: Session, conversation_id: uuid.UUID, message_id: uuid.UUID
+) -> bool:
+    """Whether an auto-reply was already stored for this inbound message.
+
+    An auto-reply is persisted twice (the internal ``ai`` draft and the
+    delivered ``text`` message), and both carry ``reply_to_message_id`` in
+    their metadata. Checking before generating makes the worker idempotent: a
+    message that was already answered (e.g. because the webhook was delivered
+    again or two workers raced) is never answered twice.
+    """
+    reference = str(message_id)
+    candidates = session.exec(
+        select(WhatsAppMessage)
+        .where(
+            WhatsAppMessage.conversation_id == conversation_id,
+            WhatsAppMessage.message_type.in_(("ai", "text")),
+            WhatsAppMessage.is_active == True,
+        )
+        .order_by(desc(WhatsAppMessage.created_at))
+        .limit(50)
+    ).all()
+    for candidate in candidates:
+        metadata = candidate.metadata_json or {}
+        if (
+            metadata.get("ai_kind") == "auto_reply"
+            and metadata.get("reply_to_message_id") == reference
+        ):
+            return True
+    return False
 
 
 def _recent_context(
@@ -129,8 +166,8 @@ def _process(message_id: uuid.UUID) -> None:
             return
 
         lock = _conversation_lock(conversation.id)
-        
-        if not lock.acquire(blocking=False):
+
+        if not lock.acquire(timeout=_LOCK_TIMEOUT_SECONDS):
             return
         try:
             _generate_and_send(session, message, conversation, integration)
@@ -144,6 +181,15 @@ def _generate_and_send(
     conversation: WhatsAppConversation,
     integration: WhatsAppIntegration,
 ) -> None:
+    if _already_answered(
+        session=session,
+        conversation_id=conversation.id,
+        message_id=message.id,
+    ):
+        _logger.warning(
+            "Skipping duplicate AI auto-reply for message %s", message.id
+        )
+        return
     company = session.get(Company, conversation.company_id)
     if company is None:
         return

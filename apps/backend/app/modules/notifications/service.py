@@ -64,7 +64,6 @@ def create_message_notifications(
     created = 0
     for message_id in message_ids:
         message = session.get(WhatsAppMessage, message_id)
-        print(message)
 
         if message is None or not message.is_active:
             continue
@@ -121,7 +120,7 @@ def _recent_unread_for_conversation(
             Notification.is_read.is_(False),
             Notification.created_at >= cutoff,
         )
-    ).first()
+    ).scalars().first()
     return existing is not None
 
 
@@ -264,7 +263,7 @@ def mark_all_notifications_read(
             Notification.company_id == resolved,
             Notification.is_read.is_(False),
         )
-    ).all()
+    ).scalars().all()
     for notification in notifications:
         notification.is_read = True
     if notifications:

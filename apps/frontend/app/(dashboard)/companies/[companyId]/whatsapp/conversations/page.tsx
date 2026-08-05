@@ -36,6 +36,7 @@ import { useApp } from "@/components/app-provider"
 import { WhatsAppSectionTabs } from "@/components/whatsapp/whatsapp-section-tabs"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
+import { Markdown } from "@/components/ui/markdown"
 import { PageHeader } from "@/components/ui/page-header"
 import { ConversationDialog } from "@/components/whatsapp/conversation-dialog"
 import { compactPrompt } from "@/lib/token-saver"
@@ -885,9 +886,13 @@ function MessageBubble({
               Internal
             </Badge>
           </div>
-          <p className="break-words whitespace-pre-wrap">
-            {message.content ?? ""}
-          </p>
+          {isNote ? (
+            <p className="break-words whitespace-pre-wrap">
+              {message.content ?? ""}
+            </p>
+          ) : (
+            <Markdown content={message.content ?? ""} />
+          )}
           <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
             <span>{formatDateTime(message.sent_at ?? message.created_at)}</span>
           </div>
