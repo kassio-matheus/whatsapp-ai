@@ -1932,7 +1932,7 @@ def _process_webhook_change(
     session: Session,
     integration: WhatsAppIntegration,
     value: dict[str, object],
-    inbound_message_ids: list[uuid.UUID] | None = None,
+    inbound_message_ids: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]] | None = None,
 ) -> int:
     configured_phone_number_id = integration.config_json.get("phone_number_id")
     metadata = value.get("metadata")
@@ -2047,7 +2047,14 @@ def _process_webhook_change(
             session.add(existing_message)
             processed += 1
             if inbound_message_ids is not None and was_new:
-                inbound_message_ids.append(existing_message.id)
+                inbound_message_ids.append(
+                    (
+                        existing_message.id,
+                        conversation.id,
+                        integration.company_id,
+                        integration.id,
+                    )
+                )
 
     statuses = value.get("statuses")
     if isinstance(statuses, list):
@@ -2140,7 +2147,7 @@ def process_meta_webhook(
 
     processed = 0
     template_catalog_changed = False
-    inbound_message_ids: list[uuid.UUID] = []
+    inbound_message_ids: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]] = []
     for integration in valid_integrations:
         for entry in entries:
             if not isinstance(entry, dict) or str(entry.get("id")) != str(
@@ -2180,6 +2187,7 @@ def process_meta_webhook(
                     instance_id=integration.id,
                 )
     if inbound_message_ids:
+        new_message_ids = [m_id for m_id, _, _, _ in inbound_message_ids]
         # Surface in-app notifications for the new inbound messages. Best-effort:
         # a failure here must never break webhook ingestion.
         try:
@@ -2189,12 +2197,25 @@ def process_meta_webhook(
 
             create_message_notifications(
                 session=session,
-                message_ids=inbound_message_ids,
+                message_ids=new_message_ids,
             )
         except Exception:
             logger.exception(
                 "Failed to create notifications for inbound messages")
-        for message_id in inbound_message_ids:
+        # Emit a targeted SSE event per new inbound message so the front end can
+        # reload just that conversation in real time, instead of waiting for a
+        # coarse inbox refresh or a poll.
+        for m_id, conversation_id, company_id, integration_id in (
+            inbound_message_ids
+        ):
+            whatsapp_event_broker.publish(
+                company_id=company_id,
+                event_type="message.created",
+                instance_id=integration_id,
+                conversation_id=conversation_id,
+                message_id=m_id,
+            )
+        for m_id, _, _, _ in inbound_message_ids:
             # Imported lazily so the WhatsApp module does not depend on the AI
             # module at import time. The responder re-validates eligibility and
             # acts only when the company and conversation allow it. Scheduling
@@ -2202,8 +2223,8 @@ def process_meta_webhook(
             try:
                 from app.modules.ai_whatsapp.service import process_inbound_message
 
-                process_inbound_message(session=session, message_id=message_id)
+                process_inbound_message(session=session, message_id=m_id)
             except Exception:
                 logger.exception(
-                    "Failed to schedule AI auto-reply for %s", message_id)
+                    "Failed to schedule AI auto-reply for %s", m_id)
     return {"received": True, "processed": processed}

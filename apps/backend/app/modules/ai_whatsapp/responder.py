@@ -12,9 +12,11 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
-from sqlalchemy import desc
+from sqlalchemy import desc, text
 from sqlmodel import Session, select
 
 from app.core.db import engine
@@ -56,6 +58,39 @@ def _conversation_lock(conversation_id: uuid.UUID) -> threading.Lock:
     with _LOCKS_GUARD:
         lock = _LOCKS.setdefault(conversation_id, threading.Lock())
     return lock
+
+
+@contextmanager
+def _cross_process_lock(
+    session: Session, conversation_id: uuid.UUID
+) -> Iterator[None]:
+    """Serialize auto-replies for the same chat across backend workers.
+
+    The in-process ``threading.Lock`` only coordinates threads inside one
+    worker. With several uvicorn workers, two workers could both pass the
+    ``_already_answered`` pre-check before either commits, delivering the reply
+    twice. A PostgreSQL transaction-scoped advisory lock closes that gap: the
+    worker that wins the lock keeps it until the reply is committed, so the
+    other worker's ``_already_answered`` check sees the delivered reply and
+    skips. Databases without advisory locks (e.g. SQLite) degrade gracefully to
+    the in-process lock.
+    """
+    acquired = False
+    try:
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+            {"key": f"whatsapp_auto_reply:{conversation_id}"},
+        )
+        acquired = True
+    except Exception:  # noqa: BLE001 - advisory locks are PostgreSQL-only
+        session.rollback()
+    try:
+        yield
+    finally:
+        if acquired:
+            # The reply commit already released the transaction lock; this is a
+            # no-op unless the reply was skipped and the transaction is still open.
+            session.rollback()
 
 
 def _already_answered(
@@ -178,7 +213,8 @@ def _process(message_id: uuid.UUID) -> None:
         if not lock.acquire(timeout=_LOCK_TIMEOUT_SECONDS):
             return
         try:
-            _generate_and_send(session, message, conversation, integration)
+            with _cross_process_lock(session, conversation.id):
+                _generate_and_send(session, message, conversation, integration)
         finally:
             lock.release()
 
@@ -246,7 +282,10 @@ def _generate_and_send(
             session=session,
             company=company,
             owner=owner,
-            prompt=message.content or "",
+            prompt=(
+                f'The customer just sent: "{message.content or ""}". '
+                "Write the reply to send to the customer."
+            ),
             context=context,
             system_prompt=system_prompt,
             actor_user_id=str(company.owner_id),

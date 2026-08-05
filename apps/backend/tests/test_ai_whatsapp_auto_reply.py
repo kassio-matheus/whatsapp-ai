@@ -119,7 +119,7 @@ def test_auto_reply_delivers_exactly_one_message(session, monkeypatch):
     assert reply.metadata_json.get("ai_kind") == "auto_reply"
     assert reply.metadata_json.get("reply_to_message_id") == str(inbound.id)
     assert captured["allowed_tools"] == []
-    assert captured["prompt"] == "quanto custa o plano basico?"
+    assert "quanto custa o plano basico?" in captured["prompt"]
 
 
 def test_auto_reply_does_not_send_when_already_answered(session, monkeypatch):

@@ -42,6 +42,9 @@ DEFAULT_AUTO_REPLY_SYSTEM_PROMPT = (
     "customer), reply politely that a human will take over, and keep it short.\n"
     "- Never invent facts, prices or availability. If unsure, ask a clarifying "
     "question or defer to a human.\n"
+    "- The customer's last message is the final user message you must answer. "
+    "Write a brand-new original reply to it. Never simply repeat or paraphrase "
+    "the customer's message back to them.\n"
     "Return only the message text to send to the customer."
 )
 

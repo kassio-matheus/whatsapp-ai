@@ -145,6 +145,8 @@ export default function ConversationsPage() {
 
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = React.useRef(true)
+  // Guards against stale async responses overwriting newer message reloads.
+  const loadMessagesSeqRef = React.useRef(0)
 
   const handleMessagesViewportScroll = React.useCallback(() => {
     const viewport = messagesViewportRef.current
@@ -242,17 +244,26 @@ export default function ConversationsPage() {
   const loadMessages = React.useCallback(
     async (conversationId: string | null, showLoader = false) => {
       if (!token || !conversationId) {
+        loadMessagesSeqRef.current += 1
         setMessages([])
         return
       }
+      const requestSeq = loadMessagesSeqRef.current + 1
+      loadMessagesSeqRef.current = requestSeq
       if (showLoader) {
         setMessagesLoading(true)
       }
       try {
         const result = await api.listConversationMessages(conversationId, token)
-        setMessages(result)
+        // SSE events, the poll fallback and optimistic updates can fire several
+        // overlapping reloads. Only the newest request may write the list, or a
+        // stale response (fetched before the AI reply was committed) would
+        // overwrite newer messages and make the latest message "disappear".
+        if (loadMessagesSeqRef.current === requestSeq) {
+          setMessages(result)
+        }
       } finally {
-        if (showLoader) {
+        if (showLoader && loadMessagesSeqRef.current === requestSeq) {
           setMessagesLoading(false)
         }
       }
@@ -408,7 +419,13 @@ export default function ConversationsPage() {
       },
       token
     )
-    setMessages((previous) => [...previous, created])
+    // The SSE event for this message can trigger a reload that already contains
+    // it, so appending blindly would show it twice. Append only if it's new.
+    setMessages((previous) =>
+      previous.some((message) => message.id === created.id)
+        ? previous
+        : [...previous, created]
+    )
     void loadConversations()
   }
 
@@ -417,7 +434,11 @@ export default function ConversationsPage() {
       return
     }
     const created = await api.createNote(selectedId, content, token)
-    setMessages((previous) => [...previous, created])
+    setMessages((previous) =>
+      previous.some((message) => message.id === created.id)
+        ? previous
+        : [...previous, created]
+    )
     void loadConversations()
   }
 
@@ -428,11 +449,15 @@ export default function ConversationsPage() {
     setAiPending(true)
     try {
       const result = await api.askAi(selectedId, compactPrompt(prompt), token)
-      setMessages((previous) => [
-        ...previous,
-        result.prompt_message,
-        result.message,
-      ])
+      setMessages((previous) => {
+        const next = [...previous]
+        for (const message of [result.prompt_message, result.message]) {
+          if (!next.some((item) => item.id === message.id)) {
+            next.push(message)
+          }
+        }
+        return next
+      })
       void loadConversations()
     } finally {
       setAiPending(false)
