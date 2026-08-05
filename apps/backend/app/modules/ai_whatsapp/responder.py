@@ -61,36 +61,59 @@ def _conversation_lock(conversation_id: uuid.UUID) -> threading.Lock:
 
 
 @contextmanager
-def _cross_process_lock(
-    session: Session, conversation_id: uuid.UUID
-) -> Iterator[None]:
+def _cross_process_lock(conversation_id: uuid.UUID) -> Iterator[bool]:
     """Serialize auto-replies for the same chat across backend workers.
 
-    The in-process ``threading.Lock`` only coordinates threads inside one
-    worker. With several uvicorn workers, two workers could both pass the
-    ``_already_answered`` pre-check before either commits, delivering the reply
-    twice. A PostgreSQL transaction-scoped advisory lock closes that gap: the
-    worker that wins the lock keeps it until the reply is committed, so the
-    other worker's ``_already_answered`` check sees the delivered reply and
-    skips. Databases without advisory locks (e.g. SQLite) degrade gracefully to
-    the in-process lock.
+    Uses a *session-level* advisory lock (`pg_advisory_lock` /
+    `pg_advisory_unlock`) on its own dedicated connection, held explicitly for
+    as long as this context manager is open — including through the slow AI
+    network call.
+
+    A transaction-scoped lock (`pg_advisory_xact_lock`) is the wrong tool
+    here: it's tied to the surrounding business transaction, and if that
+    transaction is torn down mid-generation (e.g. an
+    `idle_in_transaction_session_timeout` firing while we wait on the LLM),
+    the lock is released early, letting a second worker answer the same
+    message. A dedicated connection with an explicit lock avoids that failure
+    mode, since it isn't coupled to the business transaction's lifetime.
+
+    Yields whether the lock was actually acquired, so callers can tell the
+    difference between "protected" and "running in degraded, in-process-only
+    mode" (e.g. on SQLite, which has no advisory locks) instead of silently
+    losing cross-process protection.
     """
+    lock_key = f"whatsapp_auto_reply:{conversation_id}"
     acquired = False
+    conn = engine.connect()
     try:
-        session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-            {"key": f"whatsapp_auto_reply:{conversation_id}"},
-        )
-        acquired = True
-    except Exception:  # noqa: BLE001 - advisory locks are PostgreSQL-only
-        session.rollback()
-    try:
-        yield
+        try:
+            conn.execute(
+                text("SELECT pg_advisory_lock(hashtext(:key))"),
+                {"key": lock_key},
+            )
+            acquired = True
+        except Exception:  # noqa: BLE001 - advisory locks are PostgreSQL-only
+            _logger.warning(
+                "Advisory lock unavailable for conversation %s "
+                "(non-PostgreSQL backend?) - falling back to in-process "
+                "locking only, which does NOT protect against duplicate "
+                "replies across multiple backend workers.",
+                conversation_id,
+            )
+        yield acquired
     finally:
         if acquired:
-            # The reply commit already released the transaction lock; this is a
-            # no-op unless the reply was skipped and the transaction is still open.
-            session.rollback()
+            try:
+                conn.execute(
+                    text("SELECT pg_advisory_unlock(hashtext(:key))"),
+                    {"key": lock_key},
+                )
+            except Exception:
+                _logger.exception(
+                    "Failed to release advisory lock for conversation %s",
+                    conversation_id,
+                )
+        conn.close()
 
 
 def _already_answered(
@@ -213,7 +236,7 @@ def _process(message_id: uuid.UUID) -> None:
         if not lock.acquire(timeout=_LOCK_TIMEOUT_SECONDS):
             return
         try:
-            with _cross_process_lock(session, conversation.id):
+            with _cross_process_lock(conversation.id):
                 _generate_and_send(session, message, conversation, integration)
         finally:
             lock.release()

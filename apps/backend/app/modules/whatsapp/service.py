@@ -2029,7 +2029,19 @@ def _process_webhook_change(
 
             was_new = existing_message is None
             if existing_message is None:
-                existing_message = WhatsAppMessage(
+                # Race guard: two concurrent deliveries of the same Meta
+                # webhook (common on retries) can both reach this point
+                # having seen no existing row for `external_id`, since
+                # neither has committed yet. A SAVEPOINT lets us attempt the
+                # insert in isolation: if a concurrent transaction won the
+                # race and committed first, the unique constraint on
+                # (integration_id, external_id) rejects our insert instead
+                # of silently creating a duplicate message. We then roll
+                # back just this savepoint, re-select, and fall through to
+                # the "existing message" branch below - so this delivery is
+                # treated as a duplicate, not a new inbound message, and
+                # never triggers a second AI reply.
+                new_message = WhatsAppMessage(
                     company_id=integration.company_id,
                     integration_id=integration.id,
                     conversation_id=conversation.id,
@@ -2044,7 +2056,26 @@ def _process_webhook_change(
                     created_at=now,
                     updated_at=now,
                 )
-            else:
+                try:
+                    with session.begin_nested():
+                        session.add(new_message)
+                        session.flush()
+                    existing_message = new_message
+                except IntegrityError:
+                    logger.info(
+                        "Duplicate inbound webhook delivery for external_id=%s "
+                        "(integration=%s) - another request already stored it",
+                        external_id,
+                        integration.id,
+                    )
+                    existing_message = session.exec(existing_statement).first()
+                    if existing_message is None:
+                        # Extremely unlikely (conflict on something else),
+                        # but don't silently drop the message.
+                        raise
+                    was_new = False
+
+            if not was_new:
                 existing_message.conversation_id = conversation.id
                 existing_message.metadata_json = {
                     **existing_message.metadata_json,
@@ -2054,7 +2085,8 @@ def _process_webhook_change(
                     existing_message.media_url = media_url
                 existing_message.is_active = True
                 existing_message.updated_at = _now()
-            session.add(existing_message)
+                session.add(existing_message)
+
             processed += 1
             if inbound_message_ids is not None and was_new:
                 inbound_message_ids.append(
@@ -2140,17 +2172,35 @@ def process_meta_webhook(
         return {"received": True, "processed": 0}
 
     valid_integrations = []
+    seen_waba_ids: set[str] = set()
     for integration in integrations:
         try:
             credentials = _cloud_credentials(integration)
         except HTTPException:
             continue
-        if verify_webhook_signature(
+        if not verify_webhook_signature(
             raw_payload,
             signature_header,
             credentials.app_secret,
         ):
-            valid_integrations.append(integration)
+            continue
+        # Guard against duplicate/stale integration rows pointing at the same
+        # WABA (e.g. a coexistence-mode integration and a legacy one both
+        # registered for the same external_account_id). Without this, the
+        # same webhook entry gets matched and processed once per integration
+        # below, creating duplicate inbound messages and duplicate AI replies
+        # for a single customer message.
+        waba_key = str(integration.external_account_id)
+        if waba_key in seen_waba_ids:
+            logger.warning(
+                "Skipping duplicate WhatsAppIntegration %s for WABA %s "
+                "(another active integration already covers this WABA)",
+                integration.id,
+                waba_key,
+            )
+            continue
+        seen_waba_ids.add(waba_key)
+        valid_integrations.append(integration)
     if not valid_integrations:
         raise HTTPException(
             status_code=403, detail="Invalid Meta webhook signature")
@@ -2199,8 +2249,6 @@ def process_meta_webhook(
                 )
     if inbound_message_ids:
         new_message_ids = [m_id for m_id, _, _, _ in inbound_message_ids]
-        # Surface in-app notifications for the new inbound messages. Best-effort:
-        # a failure here must never break webhook ingestion.
         try:
             from app.modules.notifications.service import (
                 create_message_notifications,
@@ -2213,9 +2261,6 @@ def process_meta_webhook(
         except Exception:
             logger.exception(
                 "Failed to create notifications for inbound messages")
-        # Emit a targeted SSE event per new inbound message so the front end can
-        # reload just that conversation in real time, instead of waiting for a
-        # coarse inbox refresh or a poll.
         for m_id, conversation_id, company_id, integration_id in (
             inbound_message_ids
         ):

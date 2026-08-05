@@ -178,12 +178,15 @@ def _cooldown_active(
 ) -> bool:
     if cooldown_seconds <= 0:
         return False
+    
     cutoff = _now() - datetime.timedelta(seconds=cooldown_seconds)
+
     statement = select(WhatsAppMessage).where(
         WhatsAppMessage.conversation_id == conversation_id,
         WhatsAppMessage.direction == MessageDirection.OUTBOUND.value,
         WhatsAppMessage.created_at >= cutoff,
     )
+    
     return session.exec(statement).first() is not None
 
 
@@ -251,14 +254,18 @@ def trigger_auto_reply(session: Session, message_id: uuid.UUID) -> bool:
 def process_inbound_message(session: Session, message_id: uuid.UUID) -> None:
     """Public entry point used by the WhatsApp module after persisting a message."""
     message = session.get(WhatsAppMessage, message_id)
+
     if message is None or not message.is_active:
         return
+    
     conversation = session.get(WhatsAppConversation, message.conversation_id)
     if conversation is None or not conversation.is_active:
         return
+    
     integration = session.get(WhatsAppIntegration, conversation.integration_id)
     if integration is None:
         return
+    
     if should_auto_reply(
         session=session,
         message=message,
