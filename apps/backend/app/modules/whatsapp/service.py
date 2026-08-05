@@ -1145,6 +1145,7 @@ def list_messages(
             conversation_id=conversation_id,
             current_user=current_user,
         )
+
         conditions = [WhatsAppMessage.conversation_id == conversation.id]
     elif integration_id is not None:
         integration = _get_integration(
@@ -1153,6 +1154,7 @@ def list_messages(
             current_user=current_user,
         )
         conditions = [WhatsAppMessage.integration_id == integration.id]
+
     else:
         company_ids = _accessible_company_ids(
             session=session,
@@ -1164,15 +1166,21 @@ def list_messages(
             WhatsAppIntegration.is_active == True,
         )
         conditions = [WhatsAppMessage.integration_id.in_(active_integrations)]
+
     conditions.append(WhatsAppMessage.is_active == True)
+
     statement = (
         select(WhatsAppMessage)
         .where(*conditions)
-        .order_by(asc(WhatsAppMessage.created_at))
+        .order_by(desc(WhatsAppMessage.created_at))
         .offset(offset)
         .limit(limit)
     )
-    return list(session.exec(statement).all())
+
+    messages = list(session.exec(statement).all())
+    messages.reverse()
+
+    return messages
 
 
 def create_message(
@@ -1932,7 +1940,8 @@ def _process_webhook_change(
     session: Session,
     integration: WhatsAppIntegration,
     value: dict[str, object],
-    inbound_message_ids: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]] | None = None,
+    inbound_message_ids: list[tuple[uuid.UUID,
+                                    uuid.UUID, uuid.UUID, uuid.UUID]] | None = None,
 ) -> int:
     configured_phone_number_id = integration.config_json.get("phone_number_id")
     metadata = value.get("metadata")
@@ -2147,7 +2156,8 @@ def process_meta_webhook(
 
     processed = 0
     template_catalog_changed = False
-    inbound_message_ids: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID]] = []
+    inbound_message_ids: list[tuple[uuid.UUID,
+                                    uuid.UUID, uuid.UUID, uuid.UUID]] = []
     for integration in valid_integrations:
         for entry in entries:
             if not isinstance(entry, dict) or str(entry.get("id")) != str(
@@ -2215,16 +2225,16 @@ def process_meta_webhook(
                 conversation_id=conversation_id,
                 message_id=m_id,
             )
-        for m_id, _, _, _ in inbound_message_ids:
-            # Imported lazily so the WhatsApp module does not depend on the AI
-            # module at import time. The responder re-validates eligibility and
-            # acts only when the company and conversation allow it. Scheduling
-            # is best-effort: a failure here must never break webhook ingestion.
-            try:
-                from app.modules.ai_whatsapp.service import process_inbound_message
+        # for m_id, _, _, _ in inbound_message_ids:
+        #     # Imported lazily so the WhatsApp module does not depend on the AI
+        #     # module at import time. The responder re-validates eligibility and
+        #     # acts only when the company and conversation allow it. Scheduling
+        #     # is best-effort: a failure here must never break webhook ingestion.
+        #     try:
+        #         from app.modules.ai_whatsapp.service import process_inbound_message
 
-                process_inbound_message(session=session, message_id=m_id)
-            except Exception:
-                logger.exception(
-                    "Failed to schedule AI auto-reply for %s", m_id)
+        #         process_inbound_message(session=session, message_id=m_id)
+        #     except Exception:
+        #         logger.exception(
+        #             "Failed to schedule AI auto-reply for %s", m_id)
     return {"received": True, "processed": processed}

@@ -785,6 +785,7 @@ def list_conversation_messages(
 ) -> list[WhatsAppMessageResponse]:
     return [
         _message_response(item)
+        
         for item in service.list_messages(
             session=session,
             current_user=current_user,

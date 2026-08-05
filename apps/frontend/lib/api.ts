@@ -894,10 +894,10 @@ export const api = {
     token: string
   ) {
     return request<WhatsAppMessage>(
-      "/whatsapp/messages",
-      { method: "POST", body: JSON.stringify(data) },
-      token
-    )
+        "/whatsapp/messages",
+        { method: "POST", body: JSON.stringify(data) },
+        token
+      )
   },
 
   createNote(conversationId: string, content: string, token: string) {
@@ -1159,7 +1159,11 @@ export const api = {
     )
   },
 
-  markNotificationRead(notificationId: string, token: string, companyId?: string) {
+  markNotificationRead(
+    notificationId: string,
+    token: string,
+    companyId?: string
+  ) {
     return request<NotificationItem>(
       `/notifications/${notificationId}/read${buildQuery({ company_id: companyId })}`,
       { method: "PATCH" },

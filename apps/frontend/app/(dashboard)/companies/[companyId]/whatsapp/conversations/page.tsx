@@ -127,9 +127,9 @@ export default function ConversationsPage() {
     null
   )
   const [aiPending, setAiPending] = React.useState(false)
-  const [companyAiEnabled, setCompanyAiEnabled] = React.useState<boolean | null>(
-    null
-  )
+  const [companyAiEnabled, setCompanyAiEnabled] = React.useState<
+    boolean | null
+  >(null)
   const [conversationAi, setConversationAi] =
     React.useState<ConversationAISettings | null>(null)
   const [aiSettingsLoading, setAiSettingsLoading] = React.useState(false)
@@ -162,10 +162,7 @@ export default function ConversationsPage() {
     (node: HTMLDivElement | null) => {
       const previous = messagesViewportRef.current
       if (previous) {
-        previous.removeEventListener(
-          "scroll",
-          handleMessagesViewportScroll
-        )
+        previous.removeEventListener("scroll", handleMessagesViewportScroll)
       }
       messagesViewportRef.current = node
       if (node) {
@@ -407,26 +404,80 @@ export default function ConversationsPage() {
     if (!token || !selectedId) {
       return
     }
-    const created = await api.createMessage(
-      {
-        conversation_id: selectedId,
-        direction: "outbound",
-        message_type: data.message_type,
-        content: data.content,
-        media_url: data.media_url,
-        metadata: data.metadata,
-        status: "pending",
-      },
-      token
-    )
-    // The SSE event for this message can trigger a reload that already contains
-    // it, so appending blindly would show it twice. Append only if it's new.
+
+    interface Message {
+      conversation_id: string
+      direction: "inbound" | "outbound"
+      external_id?: string
+      message_type?: string
+      content?: string
+      media_url?: string
+      metadata?: Record<string, unknown>
+      status: "pending" | "sent" | "delivered" | "read" | "failed"
+      sent_at?: string
+    }
+
+    const message: Message = {
+      conversation_id: selectedId,
+      direction: "outbound",
+      message_type: data.message_type,
+      content: data.content,
+      media_url: data.media_url,
+      metadata: data.metadata,
+      status: "pending",
+    }
+
+    const tempId = `temp-${Date.now()}`
+
+    const generated_message: WhatsAppMessage = {
+      id: tempId,
+      created_at: new Date().toISOString(),
+      sent_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      is_active: true,
+      company_id: companyId,
+      instance_id: selected?.instance_id ?? "",
+      content: message.content ?? "",
+      media_url: message.media_url ?? "",
+      direction: message.direction,
+      message_type: message.message_type ?? "text",
+      status: message.status,
+      metadata: message.metadata ?? {},
+      external_id: message.external_id ?? null,
+      conversation_id: selectedId,
+    }
+
+    // Inserção otimista
     setMessages((previous) =>
-      previous.some((message) => message.id === created.id)
+      previous.some((m) => m.id === generated_message.id)
         ? previous
-        : [...previous, created]
+        : [...previous, generated_message]
     )
-    void loadConversations()
+
+    try {
+      const created = await api.createMessage(message, token)
+
+      // Atualiza a mensagem otimista no lugar (troca o id temporário pelo real
+      // e sincroniza o status), em vez de tentar (inutilmente) adicioná-la de novo.
+      setMessages((previous) =>
+        previous.map((m) =>
+          m.id === tempId
+            ? {
+                ...m,
+                ...(created ?? {}),
+                id: created?.id ?? m.id,
+                status: created?.status ?? "sent",
+              }
+            : m
+        )
+      )
+
+      void loadConversations()
+    } catch (error) {
+      setMessages((previous) =>
+        previous.map((m) => (m.id === tempId ? { ...m, status: "failed" } : m))
+      )
+    }
   }
 
   async function handleCreateNote(content: string) {
@@ -618,7 +669,7 @@ export default function ConversationsPage() {
           }
         />
       ) : (
-        <div className="grid gap-3 h-[75dvh] lg:grid-cols-[320px_1fr]">
+        <div className="grid h-[75dvh] gap-3 lg:grid-cols-[320px_1fr]">
           <Card className="p-0">
             <ScrollArea className="h-[520px]">
               <ul className="flex flex-col">
@@ -723,34 +774,34 @@ export default function ConversationsPage() {
                       </Button>
                     ) : null}
                     <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <Button variant="ghost" size="icon-sm">
-                          <MoreHorizontal />
-                        </Button>
-                      }
-                    />
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={() => {
-                          setEditingConversation(selected)
-                          setDialogOpen(true)
-                        }}
-                      >
-                        <Pencil />
-                        Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onClick={() => setDeletingConversation(selected)}
-                      >
-                        <Trash2 />
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button variant="ghost" size="icon-sm">
+                            <MoreHorizontal />
+                          </Button>
+                        }
+                      />
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setEditingConversation(selected)
+                            setDialogOpen(true)
+                          }}
+                        >
+                          <Pencil />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          variant="destructive"
+                          onClick={() => setDeletingConversation(selected)}
+                        >
+                          <Trash2 />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
+                </div>
 
                 <ScrollArea
                   viewportRef={setMessagesViewport}
@@ -994,16 +1045,14 @@ function MessageBubble({
           "relative max-w-[80%] animate-pop rounded-none border px-3 py-2 text-xs",
           isOutbound
             ? "border-primary/20 bg-primary/10"
-            : "border-border bg-muted/40"
+            : "border-border bg-muted/40",
+          message.status === "failed" &&
+            "border-destructive/20 bg-destructive/10"
         )}
       >
-        {message.media_url ? (
-          <MediaPreview message={message} />
-        ) : null}
+        {message.media_url ? <MediaPreview message={message} /> : null}
         {message.content ? (
-          <p className="break-words whitespace-pre-wrap">
-            {message.content}
-          </p>
+          <p className="break-words whitespace-pre-wrap">{message.content}</p>
         ) : null}
         <div
           className={cn(
@@ -1061,7 +1110,9 @@ type TemplatePayload = {
   }>
 }
 
-function extractTemplatePayload(message: WhatsAppMessage): TemplatePayload | null {
+function extractTemplatePayload(
+  message: WhatsAppMessage
+): TemplatePayload | null {
   const metadata = message.metadata ?? {}
   if (metadata.template && typeof metadata.template === "object") {
     return metadata.template as TemplatePayload
@@ -1105,8 +1156,7 @@ function renderTemplateBody(
   const language = templateLanguage(payload)
   const template =
     templates.find(
-      (item) =>
-        item.name === name && (!language || item.language === language)
+      (item) => item.name === name && (!language || item.language === language)
     ) ?? templates.find((item) => item.name === name)
   const body = template?.components.find(
     (component) => String(component.type ?? "").toUpperCase() === "BODY"
@@ -1176,7 +1226,7 @@ function TemplateBubble({
           ) : null}
         </div>
         <div className="px-2.5 py-2">
-          <p className="break-words text-xs leading-relaxed whitespace-pre-wrap text-foreground/85">
+          <p className="text-xs leading-relaxed break-words whitespace-pre-wrap text-foreground/85">
             {bodyPreview}
           </p>
           <div className="mt-1.5 flex items-center gap-1 text-[9px] font-medium tracking-wide text-muted-foreground uppercase">
