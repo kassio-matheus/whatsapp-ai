@@ -78,6 +78,29 @@ const STATUS_BADGE: Record<
   closed: { label: "Closed", variant: "default" },
 }
 
+// Shared between the filter <Select>'s `items` prop and its rendered
+// <SelectItem> children so the two never drift out of sync.
+const STATUS_FILTER_OPTIONS = [
+  { value: "all", label: "All statuses" },
+  { value: "open", label: "Open" },
+  { value: "pending", label: "Pending" },
+  { value: "closed", label: "Closed" },
+] as const
+
+// Payload shape for a new outbound/inbound message. Hoisted out of
+// handleSendMessage so it isn't redeclared on every call.
+interface OutgoingMessagePayload {
+  conversation_id: string
+  direction: "inbound" | "outbound"
+  external_id?: string
+  message_type?: string
+  content?: string
+  media_url?: string
+  metadata?: Record<string, unknown>
+  status: "pending" | "sent" | "delivered" | "read" | "failed"
+  sent_at?: string
+}
+
 function StatusBadge({ status }: { status: ConversationStatus }) {
   const config = STATUS_BADGE[status]
   return <Badge variant={config.variant}>{config.label}</Badge>
@@ -105,8 +128,11 @@ export default function ConversationsPage() {
   const params = useParams<{ companyId: string }>()
   const { token, companies } = useApp()
   const companyId = params.companyId
-  const timezone =
-    companies.find((company) => company.id === companyId)?.timezone ?? "UTC"
+  const timezone = React.useMemo(
+    () =>
+      companies.find((company) => company.id === companyId)?.timezone ?? "UTC",
+    [companies, companyId]
+  )
 
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -120,17 +146,6 @@ export default function ConversationsPage() {
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [messages, setMessages] = React.useState<WhatsAppMessage[]>([])
   const [messagesLoading, setMessagesLoading] = React.useState(false)
-
-  // Older auto-replies were stored twice (an internal "ai" draft plus the
-  // delivered text). Skip the internal drafts so the reply appears exactly
-  // once, while keeping the operator-initiated AI drafts ("You asked the AI").
-  const visibleMessages = messages.filter(
-    (message) =>
-      !(
-        message.message_type === "ai" &&
-        message.metadata?.ai_kind === "auto_reply"
-      )
-  )
   const [templates, setTemplates] = React.useState<WhatsAppCloudApiTemplate[]>(
     []
   )
@@ -157,13 +172,54 @@ export default function ConversationsPage() {
   const [search, setSearch] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState("all")
   const [searching, setSearching] = React.useState(false)
-  // Guards against a stale async response overwriting a newer filtered load.
+
+  // Older auto-replies were stored twice (an internal "ai" draft plus the
+  // delivered text). Skip the internal drafts so the reply appears exactly
+  // once, while keeping the operator-initiated AI drafts ("You asked the AI").
+  const visibleMessages = React.useMemo(
+    () =>
+      messages.filter(
+        (message) =>
+          !(
+            message.message_type === "ai" &&
+            message.metadata?.ai_kind === "auto_reply"
+          )
+      ),
+    [messages]
+  )
+
+  // --- Data-race guards -----------------------------------------------
+  // Two *independent* counters per resource:
+  //  - the "Seq" ref guards which async response is allowed to write state
+  //    (applies to every call: initial load, background SSE/poll refreshes,
+  //    user-driven search).
+  //  - the "LoaderSeq" ref guards only the spinner/skeleton flag, and is
+  //    bumped exclusively by calls made with showLoader=true.
+  // Splitting these was the fix for the main bug: background refreshes (SSE
+  // events, the 10s poll) call load*(…) with showLoader=false but still used
+  // to bump the *same* counter the spinner relied on. If one of those fired
+  // while the initial showLoader=true load was still in flight, the initial
+  // call's `finally` block would find the shared counter had moved on and
+  // would skip clearing isLoading/messagesLoading — even though the data
+  // itself loaded and was applied correctly. The page would then sit on the
+  // skeleton/spinner forever: no error, no failed request, just a stuck
+  // loading flag hiding perfectly good data.
   const loadConversationsSeqRef = React.useRef(0)
+  const conversationsLoaderSeqRef = React.useRef(0)
+  const loadMessagesSeqRef = React.useRef(0)
+  const messagesLoaderSeqRef = React.useRef(0)
 
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = React.useRef(true)
-  // Guards against stale async responses overwriting newer message reloads.
-  const loadMessagesSeqRef = React.useRef(0)
+
+  // Keeps the latest selected conversation available to long-lived
+  // callbacks (the SSE subscription, the poll interval) without those
+  // effects needing to depend on selectedId and therefore reconnect every
+  // time the operator switches conversations.
+  const selectedIdRef = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    selectedIdRef.current = selectedId
+  }, [selectedId])
 
   const handleMessagesViewportScroll = React.useCallback(() => {
     const viewport = messagesViewportRef.current
@@ -232,14 +288,17 @@ export default function ConversationsPage() {
       }
       const effectiveFilters = filters ?? activeFiltersRef.current
       const isUserDriven = Boolean(filters)
-      const seq = loadConversationsSeqRef.current + 1
-      loadConversationsSeqRef.current = seq
+      const seq = ++loadConversationsSeqRef.current
+      const loaderSeq = showLoader ? ++conversationsLoaderSeqRef.current : null
+
       if (showLoader) {
         setIsLoading(true)
       }
       if (
         isUserDriven &&
-        (effectiveFilters.phone || effectiveFilters.title || effectiveFilters.status)
+        (effectiveFilters.phone ||
+          effectiveFilters.title ||
+          effectiveFilters.status)
       ) {
         setSearching(true)
       }
@@ -263,7 +322,10 @@ export default function ConversationsPage() {
           setError(null)
           setSearching(false)
           setSelectedId((previous) => {
-            if (previous && conversationsResult.some((c) => c.id === previous)) {
+            if (
+              previous &&
+              conversationsResult.some((c) => c.id === previous)
+            ) {
               return previous
             }
             const target = new URLSearchParams(window.location.search).get(
@@ -285,7 +347,10 @@ export default function ConversationsPage() {
           setSearching(false)
         }
       } finally {
-        if (showLoader && loadConversationsSeqRef.current === seq) {
+        if (
+          loaderSeq !== null &&
+          conversationsLoaderSeqRef.current === loaderSeq
+        ) {
           setIsLoading(false)
         }
       }
@@ -297,16 +362,18 @@ export default function ConversationsPage() {
     async (conversationId: string | null, showLoader = false) => {
       if (!token || !conversationId) {
         loadMessagesSeqRef.current += 1
+        messagesLoaderSeqRef.current += 1
         setMessages([])
+        setMessagesLoading(false)
         return
       }
-      const requestSeq = loadMessagesSeqRef.current + 1
-      loadMessagesSeqRef.current = requestSeq
+      const requestSeq = ++loadMessagesSeqRef.current
+      const loaderSeq = showLoader ? ++messagesLoaderSeqRef.current : null
       if (showLoader) {
         setMessagesLoading(true)
       }
       try {
-        const result = await api.listConversationMessages(conversationId, token)
+        const result = await api.listConversationMessages(companyId, conversationId, token)
         // SSE events, the poll fallback and optimistic updates can fire several
         // overlapping reloads. Only the newest request may write the list, or a
         // stale response (fetched before the AI reply was committed) would
@@ -315,12 +382,12 @@ export default function ConversationsPage() {
           setMessages(result)
         }
       } finally {
-        if (showLoader && loadMessagesSeqRef.current === requestSeq) {
+        if (loaderSeq !== null && messagesLoaderSeqRef.current === loaderSeq) {
           setMessagesLoading(false)
         }
       }
     },
-    [token]
+    [token, companyId]
   )
 
   React.useEffect(() => {
@@ -439,6 +506,9 @@ export default function ConversationsPage() {
     }
   }, [integrations, selected?.instance_id, token])
 
+  // Subscribes once per company/token instead of reconnecting on every
+  // conversation switch — selectedIdRef (kept fresh above) supplies the
+  // current conversation to the long-lived SSE/poll callbacks below.
   React.useEffect(() => {
     if (!token) {
       return
@@ -448,11 +518,12 @@ export default function ConversationsPage() {
       token,
       onEvent: (event) => {
         void loadConversations()
+        const currentId = selectedIdRef.current
         if (
-          selectedId &&
-          (!event.conversation_id || event.conversation_id === selectedId)
+          currentId &&
+          (!event.conversation_id || event.conversation_id === currentId)
         ) {
-          void loadMessages(selectedId)
+          void loadMessages(currentId)
         }
       },
     })
@@ -461,34 +532,23 @@ export default function ConversationsPage() {
     // the open conversation up to date either way.
     const poll = window.setInterval(() => {
       void loadConversations()
-      if (selectedId) {
-        void loadMessages(selectedId)
+      const currentId = selectedIdRef.current
+      if (currentId) {
+        void loadMessages(currentId)
       }
     }, 10_000)
     return () => {
       unsubscribe()
       window.clearInterval(poll)
     }
-  }, [companyId, loadConversations, loadMessages, selectedId, token])
+  }, [companyId, loadConversations, loadMessages, token])
 
   async function handleSendMessage(data: ComposerMessageData) {
     if (!token || !selectedId) {
       return
     }
 
-    interface Message {
-      conversation_id: string
-      direction: "inbound" | "outbound"
-      external_id?: string
-      message_type?: string
-      content?: string
-      media_url?: string
-      metadata?: Record<string, unknown>
-      status: "pending" | "sent" | "delivered" | "read" | "failed"
-      sent_at?: string
-    }
-
-    const message: Message = {
+    const message: OutgoingMessagePayload = {
       conversation_id: selectedId,
       direction: "outbound",
       message_type: data.message_type,
@@ -518,7 +578,7 @@ export default function ConversationsPage() {
       conversation_id: selectedId,
     }
 
-    // Inserção otimista
+    // Optimistic insert.
     setMessages((previous) =>
       previous.some((m) => m.id === generated_message.id)
         ? previous
@@ -528,8 +588,8 @@ export default function ConversationsPage() {
     try {
       const created = await api.createMessage(message, token)
 
-      // Atualiza a mensagem otimista no lugar (troca o id temporário pelo real
-      // e sincroniza o status), em vez de tentar (inutilmente) adicioná-la de novo.
+      // Swap the optimistic message in place (replace the temp id with the
+      // real one and sync status) instead of trying to add it again.
       setMessages((previous) =>
         previous.map((m) =>
           m.id === tempId
@@ -544,7 +604,7 @@ export default function ConversationsPage() {
       )
 
       void loadConversations()
-    } catch (error) {
+    } catch {
       setMessages((previous) =>
         previous.map((m) => (m.id === tempId ? { ...m, status: "failed" } : m))
       )
@@ -772,12 +832,7 @@ export default function ConversationsPage() {
               />
               <div className="flex items-center justify-between gap-2">
                 <Select
-                  items={[
-                    { value: "all", label: "All statuses" },
-                    { value: "open", label: "Open" },
-                    { value: "pending", label: "Pending" },
-                    { value: "closed", label: "Closed" },
-                  ]}
+                  items={STATUS_FILTER_OPTIONS}
                   value={statusFilter}
                   onValueChange={(value) => setStatusFilter(String(value))}
                 >
@@ -785,15 +840,18 @@ export default function ConversationsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All statuses</SelectItem>
-                    <SelectItem value="open">Open</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="closed">Closed</SelectItem>
+                    {STATUS_FILTER_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <span className="text-[10px] text-muted-foreground tabular-nums">
                   {conversations.length}{" "}
-                  {conversations.length === 1 ? "conversation" : "conversations"}
+                  {conversations.length === 1
+                    ? "conversation"
+                    : "conversations"}
                 </span>
               </div>
             </div>
@@ -852,7 +910,7 @@ export default function ConversationsPage() {
             </ScrollArea>
           </Card>
 
-          <Card className="flex p-0">
+          <Card className="flex flex-col p-0">
             {!selected ? (
               <EmptyState
                 title="Select a conversation"
@@ -1128,10 +1186,7 @@ function MessageBubble({
           )}
           <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
             <span>
-              {formatDateTime(
-                message.sent_at ?? message.created_at,
-                timezone
-              )}
+              {formatDateTime(message.sent_at ?? message.created_at, timezone)}
             </span>
           </div>
           <div className="absolute end-2 -top-2 hidden gap-0.5 group-hover:flex">
@@ -1204,7 +1259,9 @@ function MessageBubble({
               AI
             </span>
           ) : null}
-          <span>{formatDateTime(message.sent_at ?? message.created_at, timezone)}</span>
+          <span>
+            {formatDateTime(message.sent_at ?? message.created_at, timezone)}
+          </span>
           <MessageStatusIcon message={message} />
         </div>
         <div className="absolute end-2 -top-2 hidden gap-0.5 group-hover:flex">

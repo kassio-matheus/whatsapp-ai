@@ -50,8 +50,12 @@ export default function ContactsPage() {
   const params = useParams<{ companyId: string }>()
   const { token, companies } = useApp()
   const companyId = params.companyId
-  const timezone =
-    companies.find((company) => company.id === companyId)?.timezone ?? "UTC"
+  const timezone = React.useMemo(
+    () =>
+      companies.find((company) => company.id === companyId)?.timezone ??
+      "UTC",
+    [companies, companyId]
+  )
 
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -62,16 +66,38 @@ export default function ContactsPage() {
   const [search, setSearch] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState("all")
   const [searching, setSearching] = React.useState(false)
-  // Guards against a stale async response overwriting a newer search result.
+
+  // Guards which async response is allowed to write state (protects against
+  // an older, slower request overwriting a newer one).
   const loadSeqRef = React.useRef(0)
+  // Guards the loading spinner independently of the ref above. Only calls
+  // made with showLoader=true bump this one.
+  //
+  // Why this needs to be separate: this page fires two effects on mount —
+  // `load(true)` from the initial-load effect, and `load(false)` from the
+  // search effect below (trimmedSearch starts out as "", so that effect ran
+  // unconditionally on mount too). Both are async and race. Since they used
+  // to share one counter, whichever of the two resolved *second* would bump
+  // the counter past what the showLoader=true call captured, so that call's
+  // `finally` block would see `loadSeqRef.current !== seq` and skip
+  // `setIsLoading(false)` — even though setContacts(result) had already run
+  // with the right data. The page would then sit on the spinner forever:
+  // the fetch succeeded, the state was correct, nothing errored, but nobody
+  // ever told the UI to stop loading. Splitting the counters, and (below)
+  // skipping the search effect's very first run, removes both the race and
+  // the redundant duplicate request it was racing against.
+  const loaderSeqRef = React.useRef(0)
 
   const load = React.useCallback(
-    async (showLoader = false, filters?: { name?: string; phone_number?: string }) => {
+    async (
+      showLoader = false,
+      filters?: { name?: string; phone_number?: string }
+    ) => {
       if (!token) {
         return
       }
-      const seq = loadSeqRef.current + 1
-      loadSeqRef.current = seq
+      const seq = ++loadSeqRef.current
+      const loaderSeq = showLoader ? ++loaderSeqRef.current : null
       if (showLoader) {
         setIsLoading(true)
       }
@@ -100,12 +126,12 @@ export default function ContactsPage() {
           setSearching(false)
         }
       } finally {
-        if (showLoader && loadSeqRef.current === seq) {
+        if (loaderSeq !== null && loaderSeqRef.current === loaderSeq) {
           setIsLoading(false)
         }
       }
     },
-    [token, companyId],
+    [token, companyId]
   )
 
   React.useEffect(() => {
@@ -115,7 +141,15 @@ export default function ContactsPage() {
   const debouncedSearch = useDebouncedValue(search, 300)
   const trimmedSearch = debouncedSearch.trim()
 
+  // Skip the very first run: the mount effect above already triggers the
+  // initial (unfiltered) load, so firing this one too on mount would just
+  // be a redundant duplicate request racing the first one.
+  const skipFirstSearchRef = React.useRef(true)
   React.useEffect(() => {
+    if (skipFirstSearchRef.current) {
+      skipFirstSearchRef.current = false
+      return
+    }
     if (trimmedSearch) {
       void load(false, {
         name: trimmedSearch,
@@ -136,7 +170,9 @@ export default function ContactsPage() {
     return contacts
   }, [contacts, statusFilter])
 
-  const [integrations, setIntegrations] = React.useState<WhatsAppIntegration[]>([])
+  const [integrations, setIntegrations] = React.useState<WhatsAppIntegration[]>(
+    []
+  )
 
   React.useEffect(() => {
     if (!token) {
@@ -154,7 +190,7 @@ export default function ContactsPage() {
     }
     await api.deleteContact(deleting.id, token)
     setContacts((previous) =>
-      previous.filter((contact) => contact.id !== deleting.id),
+      previous.filter((contact) => contact.id !== deleting.id)
     )
     setDeleting(null)
   }
@@ -283,7 +319,8 @@ export default function ContactsPage() {
                   <TableCell>
                     <span className="flex items-center gap-2 font-medium">
                       <span className="flex size-6 items-center justify-center rounded-full bg-muted text-[10px]">
-                        {(contact.name ?? contact.phone_number)[0]?.toUpperCase() ?? "?"}
+                        {(contact.name || contact.phone_number)[0]?.toUpperCase() ??
+                          "?"}
                       </span>
                       {contact.name ?? "Unnamed"}
                     </span>
@@ -353,7 +390,7 @@ export default function ContactsPage() {
           if (editing) {
             const updated = await api.updateContact(editing.id, data, token)
             setContacts((previous) =>
-              previous.map((item) => (item.id === updated.id ? updated : item)),
+              previous.map((item) => (item.id === updated.id ? updated : item))
             )
           } else {
             const created = await api.createContact(data, token)

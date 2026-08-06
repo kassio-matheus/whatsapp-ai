@@ -44,6 +44,7 @@ webhook_router = APIRouter()
 
 def _integration_response(session: Session, db) -> WhatsAppInstanceResponse:
     tz = resolve_company_timezone(session=session, company_id=db.company_id)
+
     return WhatsAppInstanceResponse(
         id=db.id,
         company_id=db.company_id,
@@ -60,8 +61,7 @@ def _integration_response(session: Session, db) -> WhatsAppInstanceResponse:
     )
 
 
-def _contact_response(session: Session, db) -> WhatsAppContactResponse:
-    tz = resolve_company_timezone(session=session, company_id=db.company_id)
+def _contact_response(tz, db) -> WhatsAppContactResponse:
     return WhatsAppContactResponse(
         id=db.id,
         company_id=db.company_id,
@@ -96,8 +96,7 @@ def _conversation_response(session: Session, db) -> WhatsAppConversationResponse
     )
 
 
-def _message_response(session: Session, db) -> WhatsAppMessageResponse:
-    tz = resolve_company_timezone(session=session, company_id=db.company_id)
+def _message_response(tz, db) -> WhatsAppMessageResponse:
     return WhatsAppMessageResponse(
         id=db.id,
         company_id=db.company_id,
@@ -160,10 +159,10 @@ def create_cloud_api_integration(
         data=data,
     )
     return _cloud_response(session,
-        integration,
-        connection=connection,
-        webhook_subscribed=webhook_subscribed,
-    )
+                           integration,
+                           connection=connection,
+                           webhook_subscribed=webhook_subscribed,
+                           )
 
 
 @router.put(
@@ -185,10 +184,10 @@ def update_cloud_api_integration(
         data=data,
     )
     return _cloud_response(session,
-        integration,
-        connection=connection,
-        webhook_subscribed=webhook_subscribed,
-    )
+                           integration,
+                           connection=connection,
+                           webhook_subscribed=webhook_subscribed,
+                           )
 
 
 @router.post(
@@ -210,10 +209,10 @@ def verify_cloud_api_integration(
         subscribe_to_webhooks=subscribe_to_webhooks,
     )
     return _cloud_response(session,
-        integration,
-        connection=connection,
-        webhook_subscribed=webhook_subscribed,
-    )
+                           integration,
+                           connection=connection,
+                           webhook_subscribed=webhook_subscribed,
+                           )
 
 
 @router.get(
@@ -448,12 +447,12 @@ def create_integration(
     current_user: CurrentUser,
 ) -> WhatsAppInstanceResponse:
     return _integration_response(session,
-        service.create_integration(
-            session=session,
-            current_user=current_user,
-            data=data,
-        )
-    )
+                                 service.create_integration(
+                                     session=session,
+                                     current_user=current_user,
+                                     data=data,
+                                 )
+                                 )
 
 
 @router.get(
@@ -479,7 +478,8 @@ def list_integrations(
     integration_type: str | None = Query(
         default=None, description="Filter by integration type (`official` or `unofficial`)."
     ),
-    is_active: bool | None = Query(default=None, description="Filter by active status."),
+    is_active: bool | None = Query(
+        default=None, description="Filter by active status."),
 ) -> list[WhatsAppInstanceResponse]:
     return [
         _integration_response(session, item)
@@ -555,12 +555,12 @@ def get_integration(
     current_user: CurrentUser,
 ) -> WhatsAppInstanceResponse:
     return _integration_response(session,
-        service.get_integration(
-            session=session,
-            integration_id=integration_id,
-            current_user=current_user,
-        )
-    )
+                                 service.get_integration(
+                                     session=session,
+                                     integration_id=integration_id,
+                                     current_user=current_user,
+                                 )
+                                 )
 
 
 @router.put(
@@ -576,13 +576,13 @@ def update_integration(
     current_user: CurrentUser,
 ) -> WhatsAppInstanceResponse:
     return _integration_response(session,
-        service.update_integration(
-            session=session,
-            integration_id=integration_id,
-            current_user=current_user,
-            data=data,
-        )
-    )
+                                 service.update_integration(
+                                     session=session,
+                                     integration_id=integration_id,
+                                     current_user=current_user,
+                                     data=data,
+                                 )
+                                 )
 
 
 @router.delete(
@@ -616,12 +616,12 @@ def create_contact(
     current_user: CurrentUser,
 ) -> WhatsAppContactResponse:
     return _contact_response(session,
-        service.create_contact(
-            session=session,
-            current_user=current_user,
-            data=data,
-        )
-    )
+                             service.create_contact(
+                                 session=session,
+                                 current_user=current_user,
+                                 data=data,
+                             )
+                             )
 
 
 @router.get(
@@ -645,15 +645,18 @@ def list_contacts(
         description="Filter contacts by phone number (partial match).",
         json_schema_extra={"examples": ["+5575"]},
     ),
-    is_active: bool | None = Query(default=None, description="Filter by active status."),
+    is_active: bool | None = Query(
+        default=None, description="Filter by active status."),
     limit: int = Query(
         default=50, ge=1, le=200, description="Maximum number of contacts to return."
     ),
     offset: int = Query(
         default=0, ge=0, description="Number of contacts to skip."),
 ) -> list[WhatsAppContactResponse]:
+    tz = resolve_company_timezone(session=session, company_id=company_id)
+
     return [
-        _contact_response(session, item)
+        _contact_response(tz, item)
         for item in service.list_contacts(
             session=session,
             current_user=current_user,
@@ -681,12 +684,12 @@ def get_contact(
     current_user: CurrentUser,
 ) -> WhatsAppContactResponse:
     return _contact_response(session,
-        service.get_contact(
-            session=session,
-            contact_id=contact_id,
-            current_user=current_user,
-        )
-    )
+                             service.get_contact(
+                                 session=session,
+                                 contact_id=contact_id,
+                                 current_user=current_user,
+                             )
+                             )
 
 
 @router.put(
@@ -702,13 +705,13 @@ def update_contact(
     current_user: CurrentUser,
 ) -> WhatsAppContactResponse:
     return _contact_response(session,
-        service.update_contact(
-            session=session,
-            contact_id=contact_id,
-            current_user=current_user,
-            data=data,
-        )
-    )
+                             service.update_contact(
+                                 session=session,
+                                 contact_id=contact_id,
+                                 current_user=current_user,
+                                 data=data,
+                             )
+                             )
 
 
 @router.delete(
@@ -742,12 +745,12 @@ def create_conversation(
     current_user: CurrentUser,
 ) -> WhatsAppConversationResponse:
     return _conversation_response(session,
-        service.create_conversation(
-            session=session,
-            current_user=current_user,
-            data=data,
-        )
-    )
+                                  service.create_conversation(
+                                      session=session,
+                                      current_user=current_user,
+                                      data=data,
+                                  )
+                                  )
 
 
 @router.get(
@@ -815,21 +818,22 @@ def get_conversation(
     current_user: CurrentUser,
 ) -> WhatsAppConversationResponse:
     return _conversation_response(session,
-        service.get_conversation(
-            session=session,
-            conversation_id=conversation_id,
-            current_user=current_user,
-        )
-    )
+                                  service.get_conversation(
+                                      session=session,
+                                      conversation_id=conversation_id,
+                                      current_user=current_user,
+                                  )
+                                  )
 
 
 @router.get(
-    "/conversations/{conversation_id}/messages",
+    "/conversations/{company_id}/{conversation_id}/messages",
     response_model=list[WhatsAppMessageResponse],
     summary="List messages in a conversation",
     description="Return the messages of a conversation, oldest first.",
 )
 def list_conversation_messages(
+    company_id: uuid.UUID,
     conversation_id: uuid.UUID,
     session: SessionDep,
     current_user: CurrentUser,
@@ -839,8 +843,11 @@ def list_conversation_messages(
     offset: int = Query(
         default=0, ge=0, description="Number of messages to skip."),
 ) -> list[WhatsAppMessageResponse]:
+    tz = resolve_company_timezone(
+        session=session, company_id=company_id)
+
     return [
-        _message_response(session, item)
+        _message_response(tz, item)
 
         for item in service.list_messages(
             session=session,
@@ -869,13 +876,13 @@ def create_conversation_note(
     current_user: CurrentUser,
 ) -> WhatsAppMessageResponse:
     return _message_response(session,
-        service.create_note(
-            session=session,
-            current_user=current_user,
-            conversation_id=conversation_id,
-            content=data.content,
-        )
-    )
+                             service.create_note(
+                                 session=session,
+                                 current_user=current_user,
+                                 conversation_id=conversation_id,
+                                 content=data.content,
+                             )
+                             )
 
 
 @router.post(
@@ -922,13 +929,13 @@ def update_conversation(
     current_user: CurrentUser,
 ) -> WhatsAppConversationResponse:
     return _conversation_response(session,
-        service.update_conversation(
-            session=session,
-            conversation_id=conversation_id,
-            current_user=current_user,
-            data=data,
-        )
-    )
+                                  service.update_conversation(
+                                      session=session,
+                                      conversation_id=conversation_id,
+                                      current_user=current_user,
+                                      data=data,
+                                  )
+                                  )
 
 
 @router.delete(
@@ -962,12 +969,12 @@ def create_message(
     current_user: CurrentUser
 ) -> WhatsAppMessageResponse:
     return _message_response(session,
-        service.create_message(
-            session=session,
-            current_user=current_user,
-            data=data,
-        )
-    )
+                             service.create_message(
+                                 session=session,
+                                 current_user=current_user,
+                                 data=data,
+                             )
+                             )
 
 
 @router.get(
@@ -1029,12 +1036,12 @@ def get_message(
     current_user: CurrentUser,
 ) -> WhatsAppMessageResponse:
     return _message_response(session,
-        service.get_message(
-            session=session,
-            message_id=message_id,
-            current_user=current_user,
-        )
-    )
+                             service.get_message(
+                                 session=session,
+                                 message_id=message_id,
+                                 current_user=current_user,
+                             )
+                             )
 
 
 @router.put(
@@ -1050,13 +1057,13 @@ def update_message(
     current_user: CurrentUser,
 ) -> WhatsAppMessageResponse:
     return _message_response(session,
-        service.update_message(
-            session=session,
-            message_id=message_id,
-            current_user=current_user,
-            data=data,
-        )
-    )
+                             service.update_message(
+                                 session=session,
+                                 message_id=message_id,
+                                 current_user=current_user,
+                                 data=data,
+                             )
+                             )
 
 
 @router.delete(

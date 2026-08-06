@@ -499,10 +499,7 @@ export const api = {
   },
 
   // --- Companies (super admin) ---
-  createCompany(
-    data: { name: string; timezone?: string },
-    token: string
-  ) {
+  createCompany(data: { name: string; timezone?: string }, token: string) {
     return request<Company>(
       "/companies",
       { method: "POST", body: JSON.stringify(data) },
@@ -603,7 +600,12 @@ export const api = {
 
   listChatSessions(
     token: string,
-    opts: { title?: string; is_active?: boolean; limit?: number; offset?: number } = {}
+    opts: {
+      title?: string
+      is_active?: boolean
+      limit?: number
+      offset?: number
+    } = {}
   ) {
     return request<ChatSession[]>(
       `/ai/sessions${buildQuery({
@@ -929,9 +931,13 @@ export const api = {
     )
   },
 
-  listConversationMessages(conversationId: string, token: string) {
+  listConversationMessages(
+    companyId: string,
+    conversationId: string,
+    token: string
+  ) {
     return request<WhatsAppMessage[]>(
-      `/whatsapp/conversations/${conversationId}/messages`,
+      `/whatsapp/conversations/${companyId}/${conversationId}/messages`,
       {},
       token
     )
@@ -952,10 +958,10 @@ export const api = {
     token: string
   ) {
     return request<WhatsAppMessage>(
-        "/whatsapp/messages",
-        { method: "POST", body: JSON.stringify(data) },
-        token
-      )
+      "/whatsapp/messages",
+      { method: "POST", body: JSON.stringify(data) },
+      token
+    )
   },
 
   createNote(conversationId: string, content: string, token: string) {
