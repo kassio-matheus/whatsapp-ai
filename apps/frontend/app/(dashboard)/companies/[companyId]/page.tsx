@@ -100,6 +100,19 @@ export default function CompanyDashboardPage() {
     }
   }, [companyId, token])
 
+  const canManageMembers = user?.is_super_admin ?? false
+
+  const memberQuery = memberSearch.trim().toLowerCase()
+  const visibleMembers = React.useMemo(
+    () =>
+      memberQuery
+        ? members.filter((member) =>
+            member.email.toLowerCase().includes(memberQuery)
+          )
+        : members,
+    [members, memberQuery]
+  )
+
   if (isLoading) {
     return (
       <PageContainer>
@@ -127,19 +140,6 @@ export default function CompanyDashboardPage() {
       </PageContainer>
     )
   }
-
-  const canManageMembers = user?.is_super_admin ?? false
-
-  const memberQuery = memberSearch.trim().toLowerCase()
-  const visibleMembers = React.useMemo(
-    () =>
-      memberQuery
-        ? members.filter((member) =>
-            member.email.toLowerCase().includes(memberQuery)
-          )
-        : members,
-    [members, memberQuery]
-  )
 
   async function handleDeleteMember() {
     if (!token || !deletingMember) {
