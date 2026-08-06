@@ -51,7 +51,10 @@ import {
 import { formatDateTime, formatRelative } from "@/lib/format"
 
 export default function AIPage() {
-  const { token } = useApp()
+  const { token, companies, currentCompanyId } = useApp()
+  const timezone =
+    companies.find((company) => company.id === currentCompanyId)?.timezone ??
+    "UTC"
 
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -67,9 +70,17 @@ export default function AIPage() {
   const [contextTarget, setContextTarget] = React.useState<ContextSummary | null>(null)
   const [contextLoading, setContextLoading] = React.useState(false)
   const [deleting, setDeleting] = React.useState<ChatSession | null>(null)
+  const [sessionSearch, setSessionSearch] = React.useState("")
   const messagesEndRef = React.useRef<HTMLDivElement>(null)
 
   const selected = sessions.find((session) => session.id === selectedId) ?? null
+  const filteredSessions = sessionSearch.trim()
+    ? sessions.filter((session) =>
+        (session.title || "Untitled session")
+          .toLowerCase()
+          .includes(sessionSearch.trim().toLowerCase()),
+      )
+    : sessions
 
   const loadSessions = React.useCallback(
     async (showLoader = false) => {
@@ -257,9 +268,17 @@ export default function AIPage() {
       ) : (
         <div className="grid min-h-0 max-h-[80vh] flex-1 gap-3 lg:grid-cols-[300px_1fr]">
           <Card className="flex min-h-0 flex-col p-0">
+            <div className="border-b p-2">
+              <input
+                value={sessionSearch}
+                onChange={(event) => setSessionSearch(event.target.value)}
+                placeholder="Search sessions…"
+                className="h-8 w-full rounded-none border border-border bg-muted/40 px-2 text-xs outline-none placeholder:text-muted-foreground focus:border-primary/40"
+              />
+            </div>
             <ScrollArea className="flex-1">
               <ul className="flex flex-col">
-                {sessions.map((session, index) => {
+                {filteredSessions.map((session, index) => {
                   const isActive = session.id === selectedId
                   return (
                     <li
@@ -374,7 +393,11 @@ export default function AIPage() {
                       </p>
                     ) : (
                       messages.map((message) => (
-                        <ChatBubble key={message.id} message={message} />
+<ChatBubble
+                          key={message.id}
+                          message={message}
+                          timezone={timezone}
+                        />
                       ))
                     )}
                     {sending ? <TypingIndicator /> : null}
@@ -504,7 +527,11 @@ export default function AIPage() {
                   </h3>
                   <div className="flex flex-col gap-2">
                     {contextTarget.messages.map((message) => (
-                      <ChatBubble key={message.id} message={message} />
+                      <ChatBubble
+                        key={message.id}
+                        message={message}
+                        timezone={timezone}
+                      />
                     ))}
                   </div>
                 </div>
@@ -546,7 +573,13 @@ function TypingIndicator() {
   )
 }
 
-function ChatBubble({ message }: { message: ChatMessage }) {
+function ChatBubble({
+  message,
+  timezone = "UTC",
+}: {
+  message: ChatMessage
+  timezone?: string
+}) {
   const isUser = message.role === "user"
   const isSystem = message.role === "system"
   return (
@@ -573,7 +606,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
       >
         <Markdown content={message.content} />
         <span className="mt-1 block text-[10px] text-muted-foreground">
-          {formatDateTime(message.created_at)}
+          {formatDateTime(message.created_at, timezone)}
         </span>
       </div>
       {isUser ? (

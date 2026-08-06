@@ -44,6 +44,10 @@ def init_mcp(app: FastAPI) -> None:
     _tool_index = None
     _catalog_cache = None
 
+    # Warm the OpenAPI schema now so the first AI request does not pay the
+    # one-time generation cost (~170ms) while building the MCP tool server.
+    app.openapi()
+
 
 def _slugify(text: str) -> str:
     if not text:
@@ -722,7 +726,10 @@ async def mcp_session(
         app=_backend_app,
         name="A.I Backend",
         mcp_names=_mcp_names_map(),
-        httpx_client_kwargs={"headers": headers},
+        httpx_client_kwargs={
+            "headers": headers,
+            "timeout": settings.AI_PROVIDER_TIMEOUT_SECONDS,
+        },
     )
 
     transport = FastMCPTransport(mcp=server)

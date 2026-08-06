@@ -4,9 +4,11 @@ import queue
 import uuid
 
 from fastapi import APIRouter, File, Header, Query, Request, UploadFile
+from sqlmodel import Session
 from starlette.responses import PlainTextResponse, Response, StreamingResponse
 
 from app.utils.deps import CurrentUser, SessionDep
+from app.utils.timezone import resolve_company_timezone, to_company_timezone
 
 from . import service
 from .events import whatsapp_event_broker
@@ -40,7 +42,8 @@ router = APIRouter()
 webhook_router = APIRouter()
 
 
-def _integration_response(db) -> WhatsAppInstanceResponse:
+def _integration_response(session: Session, db) -> WhatsAppInstanceResponse:
+    tz = resolve_company_timezone(session=session, company_id=db.company_id)
     return WhatsAppInstanceResponse(
         id=db.id,
         company_id=db.company_id,
@@ -52,12 +55,13 @@ def _integration_response(db) -> WhatsAppInstanceResponse:
         config=db.config_json,
         credentials_configured=bool(db.credentials_json),
         is_active=db.is_active,
-        created_at=db.created_at,
-        updated_at=db.updated_at,
+        created_at=to_company_timezone(db.created_at, tz),
+        updated_at=to_company_timezone(db.updated_at, tz),
     )
 
 
-def _contact_response(db) -> WhatsAppContactResponse:
+def _contact_response(session: Session, db) -> WhatsAppContactResponse:
+    tz = resolve_company_timezone(session=session, company_id=db.company_id)
     return WhatsAppContactResponse(
         id=db.id,
         company_id=db.company_id,
@@ -69,12 +73,13 @@ def _contact_response(db) -> WhatsAppContactResponse:
         is_blocked=db.is_blocked,
         metadata=db.metadata_json,
         is_active=db.is_active,
-        created_at=db.created_at,
-        updated_at=db.updated_at,
+        created_at=to_company_timezone(db.created_at, tz),
+        updated_at=to_company_timezone(db.updated_at, tz),
     )
 
 
-def _conversation_response(db) -> WhatsAppConversationResponse:
+def _conversation_response(session: Session, db) -> WhatsAppConversationResponse:
+    tz = resolve_company_timezone(session=session, company_id=db.company_id)
     return WhatsAppConversationResponse(
         id=db.id,
         company_id=db.company_id,
@@ -84,14 +89,15 @@ def _conversation_response(db) -> WhatsAppConversationResponse:
         title=db.title,
         status=db.status,
         metadata=db.metadata_json,
-        last_message_at=db.last_message_at,
+        last_message_at=to_company_timezone(db.last_message_at, tz),
         is_active=db.is_active,
-        created_at=db.created_at,
-        updated_at=db.updated_at,
+        created_at=to_company_timezone(db.created_at, tz),
+        updated_at=to_company_timezone(db.updated_at, tz),
     )
 
 
-def _message_response(db) -> WhatsAppMessageResponse:
+def _message_response(session: Session, db) -> WhatsAppMessageResponse:
+    tz = resolve_company_timezone(session=session, company_id=db.company_id)
     return WhatsAppMessageResponse(
         id=db.id,
         company_id=db.company_id,
@@ -104,21 +110,22 @@ def _message_response(db) -> WhatsAppMessageResponse:
         media_url=db.media_url,
         status=db.status,
         metadata=db.metadata_json,
-        sent_at=db.sent_at,
+        sent_at=to_company_timezone(db.sent_at, tz),
         is_active=db.is_active,
-        created_at=db.created_at,
-        updated_at=db.updated_at,
+        created_at=to_company_timezone(db.created_at, tz),
+        updated_at=to_company_timezone(db.updated_at, tz),
     )
 
 
 def _cloud_response(
+    session: Session,
     db,
     *,
     connection,
     webhook_subscribed: bool,
 ) -> WhatsAppCloudApiConnectResponse:
     return WhatsAppCloudApiConnectResponse(
-        instance=_integration_response(db),
+        instance=_integration_response(session, db),
         verification=WhatsAppCloudApiConnectionInfo(
             app_id=connection.app_id,
             business_account_id=connection.business_account_id,
@@ -152,7 +159,7 @@ def create_cloud_api_integration(
         current_user=current_user,
         data=data,
     )
-    return _cloud_response(
+    return _cloud_response(session,
         integration,
         connection=connection,
         webhook_subscribed=webhook_subscribed,
@@ -177,7 +184,7 @@ def update_cloud_api_integration(
         current_user=current_user,
         data=data,
     )
-    return _cloud_response(
+    return _cloud_response(session,
         integration,
         connection=connection,
         webhook_subscribed=webhook_subscribed,
@@ -202,7 +209,7 @@ def verify_cloud_api_integration(
         current_user=current_user,
         subscribe_to_webhooks=subscribe_to_webhooks,
     )
-    return _cloud_response(
+    return _cloud_response(session,
         integration,
         connection=connection,
         webhook_subscribed=webhook_subscribed,
@@ -440,7 +447,7 @@ def create_integration(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppInstanceResponse:
-    return _integration_response(
+    return _integration_response(session,
         service.create_integration(
             session=session,
             current_user=current_user,
@@ -459,13 +466,31 @@ def list_integrations(
     session: SessionDep,
     current_user: CurrentUser,
     company_id: uuid.UUID | None = None,
+    name: str | None = Query(
+        default=None,
+        description="Filter instances by name (case-insensitive partial match).",
+        json_schema_extra={"examples": ["Production"]},
+    ),
+    phone_number: str | None = Query(
+        default=None,
+        description="Filter instances by phone number (partial match).",
+        json_schema_extra={"examples": ["+55"]},
+    ),
+    integration_type: str | None = Query(
+        default=None, description="Filter by integration type (`official` or `unofficial`)."
+    ),
+    is_active: bool | None = Query(default=None, description="Filter by active status."),
 ) -> list[WhatsAppInstanceResponse]:
     return [
-        _integration_response(item)
+        _integration_response(session, item)
         for item in service.list_integrations(
             session=session,
             current_user=current_user,
             company_id=company_id,
+            name=name,
+            phone_number=phone_number,
+            integration_type=integration_type,
+            is_active=is_active,
         )
     ]
 
@@ -529,7 +554,7 @@ def get_integration(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppInstanceResponse:
-    return _integration_response(
+    return _integration_response(session,
         service.get_integration(
             session=session,
             integration_id=integration_id,
@@ -550,7 +575,7 @@ def update_integration(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppInstanceResponse:
-    return _integration_response(
+    return _integration_response(session,
         service.update_integration(
             session=session,
             integration_id=integration_id,
@@ -590,7 +615,7 @@ def create_contact(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppContactResponse:
-    return _contact_response(
+    return _contact_response(session,
         service.create_contact(
             session=session,
             current_user=current_user,
@@ -610,6 +635,17 @@ def list_contacts(
     current_user: CurrentUser,
     instance_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
+    name: str | None = Query(
+        default=None,
+        description="Filter contacts by name (case-insensitive partial match).",
+        json_schema_extra={"examples": ["Kássio"]},
+    ),
+    phone_number: str | None = Query(
+        default=None,
+        description="Filter contacts by phone number (partial match).",
+        json_schema_extra={"examples": ["+5575"]},
+    ),
+    is_active: bool | None = Query(default=None, description="Filter by active status."),
     limit: int = Query(
         default=50, ge=1, le=200, description="Maximum number of contacts to return."
     ),
@@ -617,12 +653,15 @@ def list_contacts(
         default=0, ge=0, description="Number of contacts to skip."),
 ) -> list[WhatsAppContactResponse]:
     return [
-        _contact_response(item)
+        _contact_response(session, item)
         for item in service.list_contacts(
             session=session,
             current_user=current_user,
             integration_id=instance_id,
             company_id=company_id,
+            name=name,
+            phone_number=phone_number,
+            is_active=is_active,
             limit=limit,
             offset=offset,
         )
@@ -641,7 +680,7 @@ def get_contact(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppContactResponse:
-    return _contact_response(
+    return _contact_response(session,
         service.get_contact(
             session=session,
             contact_id=contact_id,
@@ -662,7 +701,7 @@ def update_contact(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppContactResponse:
-    return _contact_response(
+    return _contact_response(session,
         service.update_contact(
             session=session,
             contact_id=contact_id,
@@ -702,7 +741,7 @@ def create_conversation(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppConversationResponse:
-    return _conversation_response(
+    return _conversation_response(session,
         service.create_conversation(
             session=session,
             current_user=current_user,
@@ -723,6 +762,20 @@ def list_conversations(
     instance_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
     contact_id: uuid.UUID | None = None,
+    phone: str | None = Query(
+        default=None,
+        description="Filter conversations by contact phone number (partial match).",
+        json_schema_extra={"examples": ["+5575997136619"]},
+    ),
+    title: str | None = Query(
+        default=None,
+        description="Filter conversations by title (case-insensitive partial match).",
+        json_schema_extra={"examples": ["Suporte"]},
+    ),
+    status: str | None = Query(
+        default=None,
+        description="Filter conversations by status (`open`, `pending` or `closed`).",
+    ),
     limit: int = Query(
         default=50,
         ge=1,
@@ -734,13 +787,16 @@ def list_conversations(
     ),
 ) -> list[WhatsAppConversationResponse]:
     return [
-        _conversation_response(item)
+        _conversation_response(session, item)
         for item in service.list_conversations(
             session=session,
             current_user=current_user,
             integration_id=instance_id,
             company_id=company_id,
             contact_id=contact_id,
+            phone=phone,
+            title=title,
+            status=status,
             limit=limit,
             offset=offset,
         )
@@ -758,7 +814,7 @@ def get_conversation(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppConversationResponse:
-    return _conversation_response(
+    return _conversation_response(session,
         service.get_conversation(
             session=session,
             conversation_id=conversation_id,
@@ -784,8 +840,8 @@ def list_conversation_messages(
         default=0, ge=0, description="Number of messages to skip."),
 ) -> list[WhatsAppMessageResponse]:
     return [
-        _message_response(item)
-        
+        _message_response(session, item)
+
         for item in service.list_messages(
             session=session,
             current_user=current_user,
@@ -812,7 +868,7 @@ def create_conversation_note(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppMessageResponse:
-    return _message_response(
+    return _message_response(session,
         service.create_note(
             session=session,
             current_user=current_user,
@@ -847,8 +903,8 @@ def create_conversation_ai_message(
         actor_user_id=str(current_user.id),
     )
     return WhatsAppAiResponse(
-        prompt_message=_message_response(prompt_message),
-        message=_message_response(assistant_message),
+        prompt_message=_message_response(session, prompt_message),
+        message=_message_response(session, assistant_message),
         response=response_text,
     )
 
@@ -865,7 +921,7 @@ def update_conversation(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppConversationResponse:
-    return _conversation_response(
+    return _conversation_response(session,
         service.update_conversation(
             session=session,
             conversation_id=conversation_id,
@@ -905,7 +961,7 @@ def create_message(
     session: SessionDep,
     current_user: CurrentUser
 ) -> WhatsAppMessageResponse:
-    return _message_response(
+    return _message_response(session,
         service.create_message(
             session=session,
             current_user=current_user,
@@ -926,6 +982,18 @@ def list_messages(
     conversation_id: uuid.UUID | None = None,
     instance_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
+    direction: str | None = Query(
+        default=None,
+        description="Filter messages by direction (`inbound` or `outbound`).",
+    ),
+    message_type: str | None = Query(
+        default=None,
+        description="Filter messages by type (`text`, `image`, `note`, `ai`, etc.).",
+    ),
+    status: str | None = Query(
+        default=None,
+        description="Filter messages by status (`pending`, `sent`, `delivered`, `read`, `failed`).",
+    ),
     limit: int = Query(
         default=100, ge=1, le=500, description="Maximum number of messages to return."
     ),
@@ -933,13 +1001,16 @@ def list_messages(
         default=0, ge=0, description="Number of messages to skip."),
 ) -> list[WhatsAppMessageResponse]:
     return [
-        _message_response(item)
+        _message_response(session, item)
         for item in service.list_messages(
             session=session,
             current_user=current_user,
             conversation_id=conversation_id,
             integration_id=instance_id,
             company_id=company_id,
+            direction=direction,
+            message_type=message_type,
+            status=status,
             limit=limit,
             offset=offset,
         )
@@ -957,7 +1028,7 @@ def get_message(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppMessageResponse:
-    return _message_response(
+    return _message_response(session,
         service.get_message(
             session=session,
             message_id=message_id,
@@ -978,7 +1049,7 @@ def update_message(
     session: SessionDep,
     current_user: CurrentUser,
 ) -> WhatsAppMessageResponse:
-    return _message_response(
+    return _message_response(session,
         service.update_message(
             session=session,
             message_id=message_id,

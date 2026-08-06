@@ -1,4 +1,7 @@
-export function formatDateTime(value: string | null | undefined): string {
+export function formatDateTime(
+  value: string | null | undefined,
+  timezone?: string
+): string {
   if (!value) {
     return "—"
   }
@@ -9,10 +12,14 @@ export function formatDateTime(value: string | null | undefined): string {
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
+    ...(timezone ? { timeZone: timezone } : {}),
   }).format(date)
 }
 
-export function formatDate(value: string | null | undefined): string {
+export function formatDate(
+  value: string | null | undefined,
+  timezone?: string
+): string {
   if (!value) {
     return "—"
   }
@@ -20,7 +27,10 @@ export function formatDate(value: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) {
     return "—"
   }
-  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(date)
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    ...(timezone ? { timeZone: timezone } : {}),
+  }).format(date)
 }
 
 export function formatRelative(value: string | null | undefined): string {

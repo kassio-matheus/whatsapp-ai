@@ -214,7 +214,9 @@ export default function TemplatesPage() {
   const loadInstances = React.useCallback(async () => {
     if (!token) return
     try {
-      const result = await api.listInstances(token, params.companyId)
+      const result = await api.listInstances(token, {
+        company_id: params.companyId,
+      })
       setInstances(result)
       setInstanceId((current) =>
         current &&

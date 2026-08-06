@@ -56,8 +56,10 @@ function configBoolean(integration: WhatsAppIntegration, key: string) {
 
 export default function WhatsAppConfigurationPage() {
   const params = useParams<{ companyId: string }>()
-  const { token } = useApp()
+  const { token, companies } = useApp()
   const companyId = params.companyId
+  const timezone =
+    companies.find((company) => company.id === companyId)?.timezone ?? "UTC"
 
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -93,7 +95,7 @@ export default function WhatsAppConfigurationPage() {
       return
     }
     try {
-      const result = await api.listInstances(token, companyId)
+      const result = await api.listInstances(token, { company_id: companyId })
       setConnections(result.filter((item) => item.adapter === "whatsapp_cloud"))
       setError(null)
     } catch (err) {
@@ -307,6 +309,7 @@ export default function WhatsAppConfigurationPage() {
               key={connection.id}
               index={index}
               connection={connection}
+              timezone={timezone}
               isVerifying={verifyingId === connection.id}
               onVerify={() => void handleVerify(connection)}
               onEdit={() => {
@@ -383,6 +386,7 @@ function ConnectionCard({
   onEdit,
   onDelete,
   index = 0,
+  timezone = "UTC",
 }: {
   connection: WhatsAppIntegration
   isVerifying: boolean
@@ -390,6 +394,7 @@ function ConnectionCard({
   onEdit: () => void
   onDelete: () => void
   index?: number
+  timezone?: string
 }) {
   const webhookSubscribed = configBoolean(connection, "webhook_subscribed")
   const verifiedName =
@@ -449,7 +454,7 @@ function ConnectionCard({
             label="Quality"
             value={typeof qualityRating === "string" ? qualityRating : "—"}
           />
-          <InfoRow label="Created" value={formatDateTime(connection.created_at)} />
+          <InfoRow label="Created" value={formatDateTime(connection.created_at, timezone)} />
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
           <Badge variant={webhookSubscribed ? "secondary" : "outline"}>

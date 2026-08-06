@@ -9,15 +9,16 @@ from typing import Any, cast
 
 from fastapi import HTTPException, UploadFile
 from pydantic import ValidationError
-from sqlalchemy import asc, desc
+from sqlalchemy import desc
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.r2 import R2Error, R2Object, r2
+from app.modules.ai_whatsapp.service import process_inbound_message
 from app.modules.auth.models import User
 from app.modules.companies.models import Company
-from app.modules.ai_whatsapp.service import process_inbound_message
+from app.utils.filters import build_conditions
 
 from .adapters import whatsapp_adapter_registry
 from .cloud_api import (
@@ -292,18 +293,34 @@ def list_integrations(
     session: Session,
     current_user: User,
     company_id: uuid.UUID | None = None,
+    name: str | None = None,
+    phone_number: str | None = None,
+    integration_type: str | None = None,
+    is_active: bool | None = None,
 ) -> list[WhatsAppIntegration]:
     company_ids = _accessible_company_ids(
         session=session,
         current_user=current_user,
         company_id=company_id,
     )
+    conditions = build_conditions(
+        WhatsAppIntegration,
+        {
+            "name": ("name", "contains"),
+            "phone_number": ("phone_number", "contains"),
+            "integration_type": "integration_type",
+            "is_active": "is_active",
+        },
+        name=name,
+        phone_number=phone_number,
+        integration_type=integration_type,
+        is_active=is_active,
+    )
+    conditions.append(WhatsAppIntegration.company_id.in_(company_ids))
+    conditions.append(WhatsAppIntegration.is_active == True)
     statement = (
         select(WhatsAppIntegration)
-        .where(
-            WhatsAppIntegration.company_id.in_(company_ids),
-            WhatsAppIntegration.is_active == True,
-        )
+        .where(*conditions)
         .order_by(desc(WhatsAppIntegration.created_at))
     )
     return list(session.exec(statement).all())
@@ -805,9 +822,23 @@ def list_contacts(
     current_user: User,
     integration_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
+    name: str | None = None,
+    phone_number: str | None = None,
+    is_active: bool | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[WhatsAppContact]:
+    filters = build_conditions(
+        WhatsAppContact,
+        {
+            "name": ("name", "contains"),
+            "phone_number": ("phone_number", "contains"),
+            "is_active": "is_active",
+        },
+        name=name,
+        phone_number=phone_number,
+        is_active=is_active,
+    )
     if integration_id is not None:
         integration = _get_integration(
             session=session,
@@ -830,6 +861,7 @@ def list_contacts(
             .where(
                 WhatsAppContact.integration_id.in_(active_integrations),
                 WhatsAppContact.is_active == True,
+                *filters,
             )
             .order_by(desc(WhatsAppContact.created_at))
             .offset(offset)
@@ -842,6 +874,7 @@ def list_contacts(
         .where(
             WhatsAppContact.integration_id.in_(integration_ids),
             WhatsAppContact.is_active == True,
+            *filters,
         )
         .order_by(desc(WhatsAppContact.created_at))
         .offset(offset)
@@ -970,6 +1003,9 @@ def list_conversations(
     integration_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
     contact_id: uuid.UUID | None = None,
+    phone: str | None = None,
+    title: str | None = None,
+    status: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[WhatsAppConversation]:
@@ -1003,6 +1039,15 @@ def list_conversations(
             current_user=current_user,
         )
         conditions.append(WhatsAppConversation.contact_id == contact.id)
+    if title is not None:
+        conditions.append(WhatsAppConversation.title.ilike(f"%{title}%"))
+    if status is not None:
+        conditions.append(WhatsAppConversation.status == status)
+    if phone is not None:
+        matching_contact_ids = select(WhatsAppContact.id).where(
+            WhatsAppContact.phone_number.ilike(f"%{phone}%")
+        )
+        conditions.append(WhatsAppConversation.contact_id.in_(matching_contact_ids))
     statement = (
         select(WhatsAppConversation)
         .where(*conditions)
@@ -1137,6 +1182,9 @@ def list_messages(
     conversation_id: uuid.UUID | None = None,
     integration_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
+    direction: str | None = None,
+    message_type: str | None = None,
+    status: str | None = None,
     limit: int = 100,
     offset: int = 0,
 ) -> list[WhatsAppMessage]:
@@ -1169,6 +1217,19 @@ def list_messages(
         conditions = [WhatsAppMessage.integration_id.in_(active_integrations)]
 
     conditions.append(WhatsAppMessage.is_active == True)
+    conditions.extend(
+        build_conditions(
+            WhatsAppMessage,
+            {
+                "direction": "direction",
+                "message_type": "message_type",
+                "status": "status",
+            },
+            direction=direction,
+            message_type=message_type,
+            status=status,
+        )
+    )
 
     statement = (
         select(WhatsAppMessage)

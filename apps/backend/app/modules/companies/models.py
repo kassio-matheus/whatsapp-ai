@@ -8,6 +8,7 @@ from sqlmodel import SQLModel
 
 class CompanyBase(SQLModel):
     name: str = SQLField(max_length=255)
+    timezone: str = SQLField(default="UTC", max_length=64)
     created_at: datetime = SQLField(default_factory=datetime.now)
     updated_at: datetime = SQLField(default_factory=datetime.now, nullable=True)
     is_active: bool = SQLField(default=True)
@@ -28,6 +29,15 @@ class CompanyCreate(SQLModel):
         description="Company name.",
         json_schema_extra={"examples": ["Acme Inc."]},
     )
+    timezone: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "IANA timezone used to display this company's timestamps, "
+            "e.g. `America/Sao_Paulo` or `UTC`."
+        ),
+        json_schema_extra={"examples": ["America/Sao_Paulo"]},
+    )
 
 
 class CompanyUpdate(SQLModel):
@@ -40,6 +50,12 @@ class CompanyUpdate(SQLModel):
         description="New company name.",
         json_schema_extra={"examples": ["Acme Corporation"]},
     )
+    timezone: str | None = Field(
+        default=None,
+        max_length=64,
+        description="IANA timezone used to display this company's timestamps.",
+        json_schema_extra={"examples": ["America/Sao_Paulo"]},
+    )
 
 
 class CompanyResponse(SQLModel):
@@ -47,6 +63,7 @@ class CompanyResponse(SQLModel):
 
     id: uuid.UUID = Field(description="Unique company identifier.")
     name: str = Field(description="Company name.")
+    timezone: str = Field(description="IANA timezone used for this company's timestamps.")
     is_active: bool = Field(description="Whether the company is active.")
     created_at: datetime = Field(description="Creation timestamp.")
     owner_id: uuid.UUID = Field(

@@ -5,9 +5,10 @@ from typing import Any, cast
 from mcp.types import CallToolResult
 from mcp.types import Tool as McpTool
 from openai import AsyncOpenAI, BadRequestError
-from rich.syntax import Syntax
 
+from app.core.config import settings
 from app.core.logging import console
+from app.modules.ai.llm.tool_loop import run_function_calls_parallel
 
 from ..mcp import (
     ToolSet,
@@ -187,114 +188,39 @@ class OpenAI(AIPlatform):
         actor_user_id: str | None,
         allowed_tools: list[str] | None,
     ) -> ChatResponseStructure:
-        async with (
-            AsyncOpenAI(api_key=self.api_key) as client,
-            mcp_session(actor_user_id=actor_user_id) as session,
-        ):
-            mcp_tools = await get_tools(session)
-            toolset = ToolSet(
-                tools_by_name={tool.name: tool for tool in mcp_tools},
-                query=selection_query_from_items(input_items),
-                allowed_tools=allowed_tools,
-            )
-            tool_definitions = [
-                self._to_openai_tool(tool) for tool in toolset.tools()
-            ]
+        # When no tool is allowed (e.g. WhatsApp auto-reply with
+        # ``allowed_tools=[]``) the request never carries tools, so opening the
+        # in-process MCP server and listing its tools is pure overhead. Take a
+        # single plain generation fast path instead.
+        no_tools = allowed_tools is not None and len(allowed_tools) == 0
 
-            failed_calls: dict[tuple[str, str], dict[str, object]] = {}
-
-            response = await create_response_with_tool_retry(
-                client=client,
-                input_items=input_items,
-                instruction=instruction,
-                tool_definitions=tool_definitions,
-                toolset=toolset,
-                make_request_kwargs=self._request_kwargs,
-                to_tool_definition=self._to_openai_tool,
-            )
-
-            for _ in range(MAX_REMOTE_CALLS):
-                function_calls = [
-                    item for item in response.output if item.type == "function_call"
-                ]
-                if not function_calls:
-                    break
-
-                function_outputs: list[dict[str, str]] = []
-                for function_call in function_calls:
-                    name = function_call.name
-                    args_key = function_call.arguments
-                    serialized: dict[str, object]
-                    is_error = False
-
-                    if not toolset.available(name):
-                        serialized = {"error": "Tool is not available"}
-                        console.print(
-                            f"[yellow]>>> TOOL (unavailable, skipped): {name}[/]"
-                        )
-                    elif (name, args_key) in failed_calls:
-                        serialized = failed_calls[(name, args_key)]
-                        console.print(
-                            f"[yellow]>>> TOOL (cached error, skipped): {name}[/]"
-                        )
-                    else:
-                        if toolset.ensure(name):
-                            tool_definitions = [
-                                self._to_openai_tool(tool)
-                                for tool in toolset.tools()
-                            ]
-                        console.print(f"[bold magenta]>>> TOOL: {name}[/]")
-                        try:
-                            args = json.loads(function_call.arguments or "{}")
-                            if not isinstance(args, dict):
-                                raise TypeError(
-                                    "Tool arguments must be a JSON object")
-                            if args:
-                                console.print(
-                                    Syntax(
-                                        json.dumps(args, indent=2,
-                                                   ensure_ascii=False),
-                                        "json",
-                                        word_wrap=True,
-                                        theme="monokai",
-                                        background_color="default",
-                                    )
-                                )
-                            result = await session.call_tool(name, args)
-                            serialized = self._serialize_tool_result(result)
-                            is_error = result.isError
-                            if is_error:
-                                console.print(
-                                    f"[bold red]<<< TOOL ERROR: {serialized}[/]"
-                                )
-                            else:
-                                console.print(
-                                    f"[bold green]<<< TOOL RESULT: {serialized}[/]"
-                                )
-                        except Exception as exc:  # noqa: BLE001 - tool failures feed back to the model
-                            serialized = {
-                                "error": f"{type(exc).__name__}: {exc}"}
-                            is_error = True
-                            console.print(
-                                f"[bold red]<<< TOOL ERROR: {serialized}[/]")
-
-                        if is_error:
-                            failed_calls[(name, args_key)] = serialized
-
-                    function_outputs.append(
-                        {
-                            "type": "function_call_output",
-                            "call_id": function_call.call_id,
-                            "output": json.dumps(serialized, ensure_ascii=False),
-                        }
+        async with AsyncOpenAI(
+            api_key=self.api_key,
+            timeout=settings.AI_PROVIDER_TIMEOUT_SECONDS,
+        ) as client:
+            if no_tools:
+                response = await cast(Any, client.responses.create)(
+                    **self._request_kwargs(
+                        input_items=input_items,
+                        instruction=instruction,
+                        tool_definitions=[],
                     )
+                )
+                return self._parse_response(response)
 
-                input_items = [
-                    *input_items,
-                    *[self._response_item_to_input(item)
-                      for item in response.output],
-                    *function_outputs,
+            async with mcp_session(actor_user_id=actor_user_id) as session:
+                mcp_tools = await get_tools(session)
+                toolset = ToolSet(
+                    tools_by_name={tool.name: tool for tool in mcp_tools},
+                    query=selection_query_from_items(input_items),
+                    allowed_tools=allowed_tools,
+                )
+                tool_definitions = [
+                    self._to_openai_tool(tool) for tool in toolset.tools()
                 ]
+
+                failed_calls: dict[tuple[str, str], dict[str, object]] = {}
+
                 response = await create_response_with_tool_retry(
                     client=client,
                     input_items=input_items,
@@ -305,13 +231,62 @@ class OpenAI(AIPlatform):
                     to_tool_definition=self._to_openai_tool,
                 )
 
-            if not (response.output_text or "").strip():
-                response = await cast(Any, client.responses.create)(
-                    **self._request_kwargs(
+                for _ in range(MAX_REMOTE_CALLS):
+                    function_calls = [
+                        item
+                        for item in response.output
+                        if item.type == "function_call"
+                    ]
+                    if not function_calls:
+                        break
+
+                    results = await run_function_calls_parallel(
+                        function_calls=function_calls,
+                        session=session,
+                        toolset=toolset,
+                        failed_calls=failed_calls,
+                        serialize_result=self._serialize_tool_result,
+                    )
+                    tool_definitions[:] = [
+                        self._to_openai_tool(tool) for tool in toolset.tools()
+                    ]
+
+                    function_outputs: list[dict[str, str]] = [
+                        {
+                            "type": "function_call_output",
+                            "call_id": function_call.call_id,
+                            "output": json.dumps(
+                                serialized, ensure_ascii=False
+                            ),
+                        }
+                        for function_call, (serialized, _) in zip(
+                            function_calls, results
+                        )
+                    ]
+
+                    input_items = [
+                        *input_items,
+                        *[self._response_item_to_input(item)
+                          for item in response.output],
+                        *function_outputs,
+                    ]
+                    response = await create_response_with_tool_retry(
+                        client=client,
                         input_items=input_items,
                         instruction=instruction,
-                        tool_definitions=[],
+                        tool_definitions=tool_definitions,
+                        toolset=toolset,
+                        make_request_kwargs=self._request_kwargs,
+                        to_tool_definition=self._to_openai_tool,
                     )
-                )
+
+                if not (response.output_text or "").strip():
+                    response = await cast(Any, client.responses.create)(
+                        **self._request_kwargs(
+                            input_items=input_items,
+                            instruction=instruction,
+                            tool_definitions=[],
+                        )
+                    )
 
         return self._parse_response(response)

@@ -27,13 +27,13 @@ _NEWLINES_RE = re.compile(r"\n{3,}")
 #: their history with their own model's budget, so a failover to a different
 #: model still gets a correctly sized payload.
 MODEL_CONTEXT_BUDGETS: dict[str, int] = {
-    "deepseek-v4-flash": 3000,
-    "gpt-5.6-luna": 3500,
-    "gemini-3.5-flash-lite": 3000,
-    "llama-3.1-8b-instant": 2500,
+    "deepseek-v4-flash": 6000,
+    "gpt-5.6-luna": 7000,
+    "gemini-3.5-flash-lite": 6000,
+    "llama-3.1-8b-instant": 5000,
 }
 
-DEFAULT_MODEL_CONTEXT_BUDGET = 3000
+DEFAULT_MODEL_CONTEXT_BUDGET = 6000
 
 
 def model_context_budget(model: str | None) -> int:

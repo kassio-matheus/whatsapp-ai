@@ -21,6 +21,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
+import { Input } from "@workspace/ui/components/input"
 import {
   Table,
   TableBody,
@@ -46,6 +47,7 @@ export default function CompaniesPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [renaming, setRenaming] = React.useState<string | null>(null)
   const [deleting, setDeleting] = React.useState<string | null>(null)
+  const [search, setSearch] = React.useState("")
 
   React.useEffect(() => {
     if (!token || !user?.is_super_admin) {
@@ -67,21 +69,21 @@ export default function CompaniesPage() {
     }
   }, [token, user, refreshCompanies])
 
-  async function handleCreate(name: string) {
+  async function handleCreate(name: string, timezone: string) {
     if (!token) {
       return
     }
-    const company = await api.createCompany(name, token)
+    const company = await api.createCompany({ name, timezone }, token)
     await refreshCompanies()
     switchCompany(company.id)
     router.push(`/companies/${company.id}`)
   }
 
-  async function handleRename(name: string) {
+  async function handleRename(name: string, timezone: string) {
     if (!token || !renaming) {
       return
     }
-    await api.updateCompany(renaming, name, token)
+    await api.updateCompany(renaming, { name, timezone }, token)
     await refreshCompanies()
     setRenaming(null)
   }
@@ -97,6 +99,13 @@ export default function CompaniesPage() {
 
   const renameTarget = companies.find((company) => company.id === renaming)
   const deleteTarget = companies.find((company) => company.id === deleting)
+
+  const query = search.trim().toLowerCase()
+  const visibleCompanies = query
+    ? companies.filter((company) =>
+        company.name.toLowerCase().includes(query)
+      )
+    : companies
 
   if (isLoading) {
     return (
@@ -135,87 +144,110 @@ export default function CompaniesPage() {
           />
         </Card>
       ) : (
-        <Card className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Owner</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-10" />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {companies.map((company, index) => (
-                <TableRow
-                  key={company.id}
-                  className="group stagger-enter"
-                  style={{ animationDelay: `${index * 40}ms` }}
-                >
-                  <TableCell>
-                    <Link
-                      href={`/companies/${company.id}`}
-                      className="flex items-center gap-2 font-medium hover:underline"
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-2">
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search companies…"
+              className="max-w-xs"
+            />
+            <Button variant="outline" onClick={() => setDialogOpen(true)}>
+              <Plus />
+              New company
+            </Button>
+          </div>
+          {visibleCompanies.length === 0 ? (
+            <Card className="p-0">
+              <EmptyState
+                title="No matching companies"
+                description="Try a different search term."
+              />
+            </Card>
+          ) : (
+            <Card className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Timezone</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead className="w-10" />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {visibleCompanies.map((company, index) => (
+                    <TableRow
+                      key={company.id}
+                      className="group stagger-enter"
+                      style={{ animationDelay: `${index * 40}ms` }}
                     >
-                      <Building2 className="size-4 text-muted-foreground" />
-                      {company.name}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={company.is_active ? "secondary" : "outline"}
-                    >
-                      {company.is_active ? "Active" : "Inactive"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {company.owner_id.slice(0, 8)}…
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {formatDate(company.created_at)}
-                  </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
-                          <Button variant="ghost" size="icon-sm">
-                            <MoreHorizontal />
-                          </Button>
-                        }
-                      />
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={() => {
-                            switchCompany(company.id)
-                            router.push(`/companies/${company.id}`)
-                          }}
+                      <TableCell>
+                        <Link
+                          href={`/companies/${company.id}`}
+                          className="flex items-center gap-2 font-medium hover:underline"
                         >
-                          Open dashboard
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => {
-                            setRenaming(company.id)
-                          }}
+                          <Building2 className="size-4 text-muted-foreground" />
+                          {company.name}
+                        </Link>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {company.timezone}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={company.is_active ? "secondary" : "outline"}
                         >
-                          <Pencil />
-                          Rename
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={() => setDeleting(company.id)}
-                        >
-                          <Trash2 />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
+                          {company.is_active ? "Active" : "Inactive"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {formatDate(company.created_at, company.timezone)}
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <Button variant="ghost" size="icon-sm">
+                                <MoreHorizontal />
+                              </Button>
+                            }
+                          />
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() => {
+                                switchCompany(company.id)
+                                router.push(`/companies/${company.id}`)
+                              }}
+                            >
+                              Open dashboard
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setRenaming(company.id)
+                              }}
+                            >
+                              <Pencil />
+                              Update
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              variant="destructive"
+                              onClick={() => setDeleting(company.id)}
+                            >
+                              <Trash2 />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Card>
+          )}
+        </div>
       )}
 
       <CompanyDialog
@@ -234,6 +266,7 @@ export default function CompaniesPage() {
         }}
         mode="rename"
         initialName={renameTarget?.name ?? ""}
+        initialTimezone={renameTarget?.timezone ?? "UTC"}
         onSave={handleRename}
       />
 

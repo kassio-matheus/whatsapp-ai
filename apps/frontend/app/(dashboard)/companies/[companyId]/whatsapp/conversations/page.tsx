@@ -27,6 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
+import { Input } from "@workspace/ui/components/input"
 import { ScrollArea } from "@workspace/ui/components/scroll-area"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Switch } from "@workspace/ui/components/switch"
@@ -93,8 +94,10 @@ function MessageStatusIcon({ message }: { message: WhatsAppMessage }) {
 
 export default function ConversationsPage() {
   const params = useParams<{ companyId: string }>()
-  const { token } = useApp()
+  const { token, companies } = useApp()
   const companyId = params.companyId
+  const timezone =
+    companies.find((company) => company.id === companyId)?.timezone ?? "UTC"
 
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -142,6 +145,7 @@ export default function ConversationsPage() {
     React.useState<WhatsAppConversation | null>(null)
   const [deletingMessage, setDeletingMessage] =
     React.useState<WhatsAppMessage | null>(null)
+  const [search, setSearch] = React.useState("")
 
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = React.useRef(true)
@@ -195,7 +199,10 @@ export default function ConversationsPage() {
     conversations.find((conversation) => conversation.id === selectedId) ?? null
 
   const loadConversations = React.useCallback(
-    async (showLoader = false) => {
+    async (
+      showLoader = false,
+      filters?: { phone?: string; title?: string }
+    ) => {
       if (!token) {
         return
       }
@@ -205,8 +212,13 @@ export default function ConversationsPage() {
       try {
         const [conversationsResult, integrationsResult, contactsResult] =
           await Promise.all([
-            api.listConversations(token, { company_id: companyId, limit: 100 }),
-            api.listInstances(token, companyId),
+            api.listConversations(token, {
+              company_id: companyId,
+              phone: filters?.phone,
+              title: filters?.title,
+              limit: 100,
+            }),
+            api.listInstances(token, { company_id: companyId }),
             api.listContacts(token, { company_id: companyId, limit: 200 }),
           ])
         setConversations(conversationsResult)
@@ -271,6 +283,21 @@ export default function ConversationsPage() {
   React.useEffect(() => {
     void loadConversations(true)
   }, [loadConversations])
+
+  React.useEffect(() => {
+    const trimmed = search.trim()
+    if (!trimmed) {
+      void loadConversations(false)
+      return
+    }
+    const handle = window.setTimeout(() => {
+      void loadConversations(false, {
+        phone: trimmed,
+        title: trimmed,
+      })
+    }, 300)
+    return () => window.clearTimeout(handle)
+  }, [search, loadConversations])
 
   React.useEffect(() => {
     if (!token) {
@@ -671,7 +698,15 @@ export default function ConversationsPage() {
       ) : (
         <div className="grid h-[75dvh] gap-3 lg:grid-cols-[320px_1fr]">
           <Card className="p-0">
-            <ScrollArea className="h-[520px]">
+            <div className="border-b p-2">
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search by phone or title…"
+                className="h-8"
+              />
+            </div>
+            <ScrollArea className="h-[472px]">
               <ul className="flex flex-col">
                 {conversations.map((conversation, index) => {
                   const contact = contacts.find(
@@ -712,7 +747,10 @@ export default function ConversationsPage() {
                         </span>
                         {conversation.last_message_at ? (
                           <span className="text-[10px] text-muted-foreground">
-                            {formatDateTime(conversation.last_message_at)}
+                            {formatDateTime(
+                              conversation.last_message_at,
+                              timezone
+                            )}
                           </span>
                         ) : null}
                       </button>
@@ -821,6 +859,7 @@ export default function ConversationsPage() {
                         <MessageBubble
                           key={message.id}
                           message={message}
+                          timezone={timezone}
                           templates={templates}
                           onEdit={() => setEditingMessage(message)}
                           onDelete={() => setDeletingMessage(message)}
@@ -932,11 +971,13 @@ export default function ConversationsPage() {
 
 function MessageBubble({
   message,
+  timezone = "UTC",
   templates = [],
   onEdit,
   onDelete,
 }: {
   message: WhatsAppMessage
+  timezone?: string
   templates?: WhatsAppCloudApiTemplate[]
   onEdit: () => void
   onDelete: () => void
@@ -995,7 +1036,12 @@ function MessageBubble({
             <Markdown content={message.content ?? ""} />
           )}
           <div className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
-            <span>{formatDateTime(message.sent_at ?? message.created_at)}</span>
+            <span>
+              {formatDateTime(
+                message.sent_at ?? message.created_at,
+                timezone
+              )}
+            </span>
           </div>
           <div className="absolute end-2 -top-2 hidden gap-0.5 group-hover:flex">
             <Button
@@ -1026,6 +1072,7 @@ function MessageBubble({
     return (
       <TemplateBubble
         message={message}
+        timezone={timezone}
         templates={templates}
         onEdit={onEdit}
         onDelete={onDelete}
@@ -1066,7 +1113,7 @@ function MessageBubble({
               AI
             </span>
           ) : null}
-          <span>{formatDateTime(message.sent_at ?? message.created_at)}</span>
+          <span>{formatDateTime(message.sent_at ?? message.created_at, timezone)}</span>
           <MessageStatusIcon message={message} />
         </div>
         <div className="absolute end-2 -top-2 hidden gap-0.5 group-hover:flex">
@@ -1172,11 +1219,13 @@ function renderTemplateBody(
 
 function TemplateBubble({
   message,
+  timezone = "UTC",
   templates,
   onEdit,
   onDelete,
 }: {
   message: WhatsAppMessage
+  timezone?: string
   templates: WhatsAppCloudApiTemplate[]
   onEdit: () => void
   onDelete: () => void
@@ -1240,7 +1289,9 @@ function TemplateBubble({
             isOutbound ? "justify-end" : "justify-start"
           )}
         >
-          <span>{formatDateTime(message.sent_at ?? message.created_at)}</span>
+          <span>
+            {formatDateTime(message.sent_at ?? message.created_at, timezone)}
+          </span>
           <MessageStatusIcon message={message} />
         </div>
         <div className="absolute end-2 -top-2 hidden gap-0.5 group-hover:flex">

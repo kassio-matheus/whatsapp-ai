@@ -70,14 +70,25 @@ class Settings(BaseSettings):
     # down to these ceilings before the request leaves the backend. They exist
     # because the small (~8B) models this stack targets have tight context
     # windows and degrade when flooded with irrelevant history.
-    AI_CONTEXT_BUDGET_TOKENS: int = 3500
+    AI_CONTEXT_BUDGET_TOKENS: int = 10000
     AI_PROMPT_BUDGET_TOKENS: int = 1200
     AI_SYSTEM_BUDGET_TOKENS: int = 1500
     # How many recent turns are kept from the conversation history at most.
-    AI_MAX_CONTEXT_TURNS: int = 12
+    # Kept well above the "last 20 messages" requirement so the model always
+    # reads a full recent window; the token budget is what trims old turns.
+    AI_MAX_CONTEXT_TURNS: int = 40
     # Reasoning level used when neither the company nor the global settings
     # override it. Lower values cut latency at the cost of some "thinking".
     AI_DEFAULT_REASONING_LEVEL: str = "minimal"
+    # Max seconds a single provider call (LLM or in-process MCP tool) may take
+    # before the failover chain moves to the next provider. Prevents a slow or
+    # hung provider from blocking a reply for minutes (the OpenAI SDK default
+    # is 600s). Tune up only if a provider needs longer thinking.
+    AI_PROVIDER_TIMEOUT_SECONDS: int = 45
+    # Verbose tool-call logging (rich console prints). Disabled by default in
+    # production because formatting every tool result adds latency to the tool
+    # loop; set to True to debug tool selection/execution.
+    AI_DEBUG_LOGGING: bool = False
 
     # Internal secret used to authenticate requests originated by the AI agent
     # (the MCP tool calls run against this API in-process). It replaces the

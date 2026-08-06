@@ -20,6 +20,7 @@ from app.modules.ai.models import (
 )
 from app.modules.whatsapp.service import _ensure_company_access
 from app.utils.deps import AIProtected, CurrentUser, SessionDep
+from app.utils.timezone import resolve_company_timezone, to_company_timezone
 
 router = APIRouter()
 
@@ -67,20 +68,35 @@ def create_session(
 )
 def list_sessions(
     current_user: CurrentUser,
+    session: SessionDep,
+    title: str | None = Query(
+        default=None,
+        description="Filter sessions by title (case-insensitive partial match).",
+        json_schema_extra={"examples": ["Sales"]},
+    ),
+    is_active: bool | None = Query(default=None, description="Filter by active status."),
     limit: int = Query(default=20, ge=1, le=50, description="Maximum number of sessions."),
     offset: int = Query(
         default=0, ge=0, le=10000, description="Number of sessions to skip."
     ),
 ) -> list[ChatSessionResponse]:
-    sessions = service.list_sessions(user_id=current_user.id, limit=limit, offset=offset)
+    timezone = resolve_company_timezone(
+        session=session, company_id=current_user.company_id)
+    sessions = service.list_sessions(
+        user_id=current_user.id,
+        title=title,
+        is_active=is_active,
+        limit=limit,
+        offset=offset,
+    )
     return [
         ChatSessionResponse(
             id=s.id,
             title=s.title,
             system_prompt=s.system_prompt,
             is_active=s.is_active,
-            created_at=s.created_at,
-            expires_at=s.expires_at,
+            created_at=to_company_timezone(s.created_at, timezone),
+            expires_at=to_company_timezone(s.expires_at, timezone),
             message_count=len(s.messages) if s.messages else 0,
         )
         for s in sessions

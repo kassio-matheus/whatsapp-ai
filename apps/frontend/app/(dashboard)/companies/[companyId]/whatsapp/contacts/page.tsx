@@ -21,6 +21,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
+import { Input } from "@workspace/ui/components/input"
 import {
   Table,
   TableBody,
@@ -46,8 +47,10 @@ import { formatDate } from "@/lib/format"
 
 export default function ContactsPage() {
   const params = useParams<{ companyId: string }>()
-  const { token } = useApp()
+  const { token, companies } = useApp()
   const companyId = params.companyId
+  const timezone =
+    companies.find((company) => company.id === companyId)?.timezone ?? "UTC"
 
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -55,9 +58,10 @@ export default function ContactsPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<WhatsAppContact | null>(null)
   const [deleting, setDeleting] = React.useState<WhatsAppContact | null>(null)
+  const [search, setSearch] = React.useState("")
 
   const load = React.useCallback(
-    async (showLoader = false) => {
+    async (showLoader = false, filters?: { name?: string; phone_number?: string }) => {
       if (!token) {
         return
       }
@@ -67,6 +71,8 @@ export default function ContactsPage() {
       try {
         const result = await api.listContacts(token, {
           company_id: companyId,
+          name: filters?.name,
+          phone_number: filters?.phone_number,
           limit: 200,
         })
         setContacts(result)
@@ -84,18 +90,30 @@ export default function ContactsPage() {
     [token, companyId],
   )
 
-  const [integrations, setIntegrations] = React.useState<WhatsAppIntegration[]>([])
-
   React.useEffect(() => {
     void load(true)
   }, [load])
+
+  React.useEffect(() => {
+    const trimmed = search.trim()
+    if (!trimmed) {
+      void load(false)
+      return
+    }
+    const handle = window.setTimeout(() => {
+      void load(false, { name: trimmed, phone_number: trimmed })
+    }, 300)
+    return () => window.clearTimeout(handle)
+  }, [search, load])
+
+  const [integrations, setIntegrations] = React.useState<WhatsAppIntegration[]>([])
 
   React.useEffect(() => {
     if (!token) {
       return
     }
     void api
-      .listInstances(token, companyId)
+      .listInstances(token, { company_id: companyId })
       .then(setIntegrations)
       .catch(() => undefined)
   }, [token, companyId])
@@ -128,6 +146,15 @@ export default function ContactsPage() {
           New contact
         </Button>
       </PageHeader>
+
+      <div className="flex items-center gap-2">
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search by name or phone…"
+          className="max-w-sm"
+        />
+      </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-20 text-muted-foreground">
@@ -205,7 +232,7 @@ export default function ContactsPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {formatDate(contact.created_at)}
+                    {formatDate(contact.created_at, timezone)}
                   </TableCell>
                   <TableCell>
                     <DropdownMenu>

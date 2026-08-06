@@ -19,6 +19,14 @@ def list_notifications(
     current_user: CurrentUser,
     company_id: uuid.UUID | None = None,
     unread_only: bool = False,
+    type: str | None = Query(
+        default=None,
+        description="Filter notifications by type, e.g. `whatsapp.message`.",
+    ),
+    is_read: bool | None = Query(default=None, description="Filter by read status."),
+    conversation_id: uuid.UUID | None = Query(
+        default=None, description="Filter notifications for a specific conversation."
+    ),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> NotificationListResponse:
@@ -27,6 +35,9 @@ def list_notifications(
         current_user=current_user,
         company_id=company_id,
         unread_only=unread_only,
+        type=type,
+        is_read=is_read,
+        conversation_id=conversation_id,
         limit=limit,
         offset=offset,
     )

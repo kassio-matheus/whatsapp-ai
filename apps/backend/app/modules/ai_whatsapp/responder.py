@@ -153,7 +153,7 @@ def _recent_context(
     session: Session,
     conversation_id: uuid.UUID,
     exclude_message_id: uuid.UUID | None = None,
-    limit: int = 30,
+    limit: int = 50,
 ) -> list[dict[str, str]]:
     filters = [
         WhatsAppMessage.conversation_id == conversation_id,

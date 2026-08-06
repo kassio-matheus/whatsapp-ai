@@ -1,8 +1,9 @@
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.utils.deps import CurrentUser, SessionDep, SuperAdmin
+from app.utils.timezone import to_company_timezone
 
 from . import service
 from .models import (
@@ -15,6 +16,31 @@ from .models import (
 )
 
 router = APIRouter()
+
+
+def _company_response(company) -> CompanyResponse:
+    timezone = company.timezone or "UTC"
+    return CompanyResponse(
+        id=company.id,
+        name=company.name,
+        timezone=timezone,
+        is_active=company.is_active,
+        created_at=to_company_timezone(company.created_at, timezone),
+        updated_at=to_company_timezone(company.updated_at, timezone),
+        owner_id=company.owner_id,
+    )
+
+
+def _member_response(member, timezone: str = "UTC") -> MemberResponse:
+    return MemberResponse(
+        id=member.id,
+        email=member.email,
+        is_active=member.is_active,
+        is_verified=member.is_verified,
+        is_super_admin=member.is_super_admin,
+        company_id=member.company_id,
+        created_at=to_company_timezone(member.created_at, timezone),
+    )
 
 
 @router.post(
@@ -33,13 +59,7 @@ def create_company(
     company = service.create_company(
         session=session, owner=current_user, data=data
     )
-    return CompanyResponse(
-        id=company.id,
-        name=company.name,
-        is_active=company.is_active,
-        created_at=company.created_at,
-        owner_id=company.owner_id,
-    )
+    return _company_response(company)
 
 
 @router.get(
@@ -52,18 +72,22 @@ def list_companies(
     session: SessionDep,
     current_user: CurrentUser,
     _: SuperAdmin,
+    name: str | None = Query(
+        default=None,
+        description="Filter companies by name (case-insensitive partial match).",
+        json_schema_extra={"examples": ["Acme"]},
+    ),
+    is_active: bool | None = Query(
+        default=None, description="Filter by active status."
+    ),
 ) -> list[CompanyResponse]:
-    companies = service.list_companies(session=session, owner=current_user)
-    return [
-        CompanyResponse(
-            id=c.id,
-            name=c.name,
-            is_active=c.is_active,
-            created_at=c.created_at,
-            owner_id=c.owner_id,
-        )
-        for c in companies
-    ]
+    companies = service.list_companies(
+        session=session,
+        owner=current_user,
+        name=name,
+        is_active=is_active,
+    )
+    return [_company_response(c) for c in companies]
 
 
 @router.get(
@@ -82,13 +106,7 @@ def get_company(
     company = service.get_company(
         session=session, company_id=company_id, owner=current_user
     )
-    return CompanyResponse(
-        id=company.id,
-        name=company.name,
-        is_active=company.is_active,
-        created_at=company.created_at,
-        owner_id=company.owner_id,
-    )
+    return _company_response(company)
 
 
 @router.put(
@@ -107,13 +125,7 @@ def update_company(
     company = service.update_company(
         session=session, company_id=company_id, owner=current_user, data=data
     )
-    return CompanyResponse(
-        id=company.id,
-        name=company.name,
-        is_active=company.is_active,
-        created_at=company.created_at,
-        owner_id=company.owner_id,
-    )
+    return _company_response(company)
 
 
 @router.delete(
@@ -153,15 +165,7 @@ def create_member(
         owner=current_user,
         data=data,
     )
-    return MemberResponse(
-        id=member.id,
-        email=member.email,
-        is_active=member.is_active,
-        is_verified=member.is_verified,
-        is_super_admin=member.is_super_admin,
-        company_id=member.company_id,
-        created_at=member.created_at,
-    )
+    return _member_response(member)
 
 
 @router.get(
@@ -175,22 +179,26 @@ def list_members(
     session: SessionDep,
     current_user: CurrentUser,
     _: SuperAdmin,
+    email: str | None = Query(
+        default=None,
+        description="Filter members by email (case-insensitive partial match).",
+        json_schema_extra={"examples": ["john@"]},
+    ),
+    is_active: bool | None = Query(
+        default=None, description="Filter by active status."
+    ),
 ) -> list[MemberResponse]:
-    members = service.list_members(
+    timezone = service.get_company(
         session=session, company_id=company_id, owner=current_user
+    ).timezone or "UTC"
+    members = service.list_members(
+        session=session,
+        company_id=company_id,
+        owner=current_user,
+        email=email,
+        is_active=is_active,
     )
-    return [
-        MemberResponse(
-            id=m.id,
-            email=m.email,
-            is_active=m.is_active,
-            is_verified=m.is_verified,
-            is_super_admin=m.is_super_admin,
-            company_id=m.company_id,
-            created_at=m.created_at,
-        )
-        for m in members
-    ]
+    return [_member_response(m, timezone) for m in members]
 
 
 @router.put(
@@ -214,15 +222,10 @@ def update_member(
         owner=current_user,
         data=data,
     )
-    return MemberResponse(
-        id=member.id,
-        email=member.email,
-        is_active=member.is_active,
-        is_verified=member.is_verified,
-        is_super_admin=member.is_super_admin,
-        company_id=member.company_id,
-        created_at=member.created_at,
-    )
+    timezone = service.get_company(
+        session=session, company_id=company_id, owner=current_user
+    ).timezone or "UTC"
+    return _member_response(member, timezone)
 
 
 @router.delete(

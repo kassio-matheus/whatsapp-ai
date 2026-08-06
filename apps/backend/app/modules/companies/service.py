@@ -1,4 +1,3 @@
-import datetime
 import uuid
 
 from fastapi import HTTPException
@@ -7,6 +6,8 @@ from sqlmodel import Session, select
 from app.core import security
 from app.modules.auth.models import User
 from app.modules.auth.service import get_user_by_email
+from app.utils.filters import build_conditions
+from app.utils.timezone import utcnow
 
 from .models import (
     Company,
@@ -16,9 +17,7 @@ from .models import (
     MemberUpdate,
 )
 
-
-def _now() -> datetime.datetime:
-    return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+DEFAULT_TIMEZONE = "UTC"
 
 
 def _ensure_super_admin(user: User) -> None:
@@ -36,10 +35,15 @@ def _get_owned_company(*, session: Session, company_id: uuid.UUID, owner: User) 
     return company
 
 
+def _resolve_timezone(tz_name: str | None) -> str:
+    return tz_name.strip() if tz_name and tz_name.strip() else DEFAULT_TIMEZONE
+
+
 def create_company(*, session: Session, owner: User, data: CompanyCreate) -> Company:
     _ensure_super_admin(owner)
     company = Company(
         name=data.name,
+        timezone=_resolve_timezone(data.timezone),
         owner_id=owner.id,
     )
     session.add(company)
@@ -48,12 +52,23 @@ def create_company(*, session: Session, owner: User, data: CompanyCreate) -> Com
     return company
 
 
-def list_companies(*, session: Session, owner: User) -> list[Company]:
+def list_companies(
+    *,
+    session: Session,
+    owner: User,
+    name: str | None = None,
+    is_active: bool | None = None,
+) -> list[Company]:
     _ensure_super_admin(owner)
-    statement = select(Company).where(
-        Company.owner_id == owner.id,
-        Company.is_active == True,
+    conditions = build_conditions(
+        Company,
+        {"name": ("name", "contains"), "is_active": "is_active"},
+        name=name,
+        is_active=is_active,
     )
+    conditions.append(Company.owner_id == owner.id)
+    conditions.append(Company.is_active == True)
+    statement = select(Company).where(*conditions).order_by(Company.created_at.desc())
     return list(session.exec(statement).all())
 
 
@@ -71,7 +86,9 @@ def update_company(
     company = _get_owned_company(session=session, company_id=company_id, owner=owner)
     if data.name is not None:
         company.name = data.name
-    company.updated_at = _now()
+    if data.timezone is not None:
+        company.timezone = _resolve_timezone(data.timezone)
+    company.updated_at = utcnow()
     session.add(company)
     session.commit()
     session.refresh(company)
@@ -82,27 +99,37 @@ def delete_company(*, session: Session, company_id: uuid.UUID, owner: User) -> N
     _ensure_super_admin(owner)
     company = _get_owned_company(session=session, company_id=company_id, owner=owner)
     company.is_active = False
-    company.updated_at = _now()
+    company.updated_at = utcnow()
     session.add(company)
     members = session.exec(
         select(User).where(User.company_id == company.id, User.is_active == True)
     ).all()
     for member in members:
         member.company_id = None
-        member.updated_at = _now()
+        member.updated_at = utcnow()
         session.add(member)
     session.commit()
 
 
 def list_members(
-    *, session: Session, company_id: uuid.UUID, owner: User
+    *,
+    session: Session,
+    company_id: uuid.UUID,
+    owner: User,
+    email: str | None = None,
+    is_active: bool | None = None,
 ) -> list[User]:
     _ensure_super_admin(owner)
     _get_owned_company(session=session, company_id=company_id, owner=owner)
-    statement = select(User).where(
-        User.company_id == company_id,
-        User.is_active == True,
+    conditions = build_conditions(
+        User,
+        {"email": ("email", "contains"), "is_active": "is_active"},
+        email=email,
+        is_active=is_active,
     )
+    conditions.append(User.company_id == company_id)
+    conditions.append(User.is_active == True)
+    statement = select(User).where(*conditions).order_by(User.created_at.desc())
     return list(session.exec(statement).all())
 
 
@@ -159,7 +186,7 @@ def update_member(
         member.hashed_password = security.get_password_hash(data.password)
     if data.is_active is not None:
         member.is_active = data.is_active
-    member.updated_at = _now()
+    member.updated_at = utcnow()
     session.add(member)
     session.commit()
     session.refresh(member)
@@ -178,6 +205,6 @@ def delete_member(
     )
     member.is_active = False
     member.company_id = None
-    member.updated_at = _now()
+    member.updated_at = utcnow()
     session.add(member)
     session.commit()

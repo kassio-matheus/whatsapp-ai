@@ -15,8 +15,10 @@ export type UserProfile = {
 export type Company = {
   id: string
   name: string
+  timezone: string
   is_active: boolean
   created_at: string
+  updated_at: string | null
   owner_id: string
 }
 
@@ -368,7 +370,9 @@ async function request<T>(
   return (await response.json()) as T
 }
 
-function buildQuery(params: Record<string, string | number | undefined>) {
+function buildQuery(
+  params: Record<string, string | number | boolean | undefined>
+) {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== "") {
@@ -495,26 +499,40 @@ export const api = {
   },
 
   // --- Companies (super admin) ---
-  createCompany(name: string, token: string) {
+  createCompany(
+    data: { name: string; timezone?: string },
+    token: string
+  ) {
     return request<Company>(
       "/companies",
-      { method: "POST", body: JSON.stringify({ name }) },
+      { method: "POST", body: JSON.stringify(data) },
       token
     )
   },
 
-  listCompanies(token: string) {
-    return request<Company[]>("/companies", {}, token)
+  listCompanies(
+    token: string,
+    opts: { name?: string; is_active?: boolean } = {}
+  ) {
+    return request<Company[]>(
+      `/companies${buildQuery({ name: opts.name, is_active: opts.is_active })}`,
+      {},
+      token
+    )
   },
 
   getCompany(companyId: string, token: string) {
     return request<Company>(`/companies/${companyId}`, {}, token)
   },
 
-  updateCompany(companyId: string, name: string, token: string) {
+  updateCompany(
+    companyId: string,
+    data: { name?: string; timezone?: string },
+    token: string
+  ) {
     return request<Company>(
       `/companies/${companyId}`,
-      { method: "PUT", body: JSON.stringify({ name }) },
+      { method: "PUT", body: JSON.stringify(data) },
       token
     )
   },
@@ -523,8 +541,19 @@ export const api = {
     return request<void>(`/companies/${companyId}`, { method: "DELETE" }, token)
   },
 
-  listMembers(companyId: string, token: string) {
-    return request<Member[]>(`/companies/${companyId}/members`, {}, token)
+  listMembers(
+    companyId: string,
+    token: string,
+    opts: { email?: string; is_active?: boolean } = {}
+  ) {
+    return request<Member[]>(
+      `/companies/${companyId}/members${buildQuery({
+        email: opts.email,
+        is_active: opts.is_active,
+      })}`,
+      {},
+      token
+    )
   },
 
   createMember(
@@ -572,9 +601,17 @@ export const api = {
     )
   },
 
-  listChatSessions(token: string, limit = 50, offset = 0) {
+  listChatSessions(
+    token: string,
+    opts: { title?: string; is_active?: boolean; limit?: number; offset?: number } = {}
+  ) {
     return request<ChatSession[]>(
-      `/ai/sessions${buildQuery({ limit, offset })}`,
+      `/ai/sessions${buildQuery({
+        title: opts.title,
+        is_active: opts.is_active,
+        limit: opts.limit,
+        offset: opts.offset,
+      })}`,
       {},
       token
     )
@@ -715,9 +752,18 @@ export const api = {
     )
   },
 
-  listInstances(token: string, company_id?: string) {
+  listInstances(
+    token: string,
+    opts: {
+      company_id?: string
+      name?: string
+      phone_number?: string
+      integration_type?: string
+      is_active?: boolean
+    } = {}
+  ) {
     return request<WhatsAppInstance[]>(
-      `/whatsapp/instances${buildQuery({ company_id })}`,
+      `/whatsapp/instances${buildQuery(opts)}`,
       {},
       token
     )
@@ -773,7 +819,15 @@ export const api = {
 
   listContacts(
     token: string,
-    opts: { instance_id?: string; company_id?: string; limit?: number } = {}
+    opts: {
+      instance_id?: string
+      company_id?: string
+      name?: string
+      phone_number?: string
+      is_active?: boolean
+      limit?: number
+      offset?: number
+    } = {}
   ) {
     return request<WhatsAppContact[]>(
       `/whatsapp/contacts${buildQuery(opts)}`,
@@ -834,7 +888,11 @@ export const api = {
       instance_id?: string
       company_id?: string
       contact_id?: string
+      phone?: string
+      title?: string
+      status?: string
       limit?: number
+      offset?: number
     } = {}
   ) {
     return request<WhatsAppConversation[]>(
@@ -922,7 +980,11 @@ export const api = {
       conversation_id?: string
       instance_id?: string
       company_id?: string
+      direction?: string
+      message_type?: string
+      status?: string
       limit?: number
+      offset?: number
     } = {}
   ) {
     return request<WhatsAppMessage[]>(
@@ -1135,6 +1197,9 @@ export const api = {
     options: {
       companyId?: string
       unreadOnly?: boolean
+      type?: string
+      isRead?: boolean
+      conversationId?: string
       limit?: number
       offset?: number
     } = {}
@@ -1143,6 +1208,9 @@ export const api = {
       `/notifications${buildQuery({
         company_id: options.companyId,
         unread_only: options.unreadOnly ? "true" : undefined,
+        type: options.type,
+        is_read: options.isRead,
+        conversation_id: options.conversationId,
         limit: options.limit,
         offset: options.offset,
       })}`,

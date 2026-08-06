@@ -11,9 +11,9 @@ from typing import Any, cast
 
 from mcp.types import Tool as McpTool
 from openai import AsyncOpenAI
-from rich.syntax import Syntax
 
-from app.core.logging import console
+from app.core.config import settings
+from app.modules.ai.llm.tool_loop import run_function_calls_parallel
 
 from ..mcp import (
     ToolSet,
@@ -152,22 +152,15 @@ class DeepSeek(AIPlatform):
             ]
         )
 
-        async with (
-            AsyncOpenAI(api_key=self.api_key, base_url=self.base_url) as client,
-            mcp_session(actor_user_id=actor_user_id) as session,
-        ):
-            mcp_tools = await get_tools(session)
-            toolset = ToolSet(
-                tools_by_name={tool.name: tool for tool in mcp_tools},
-                query=selection_query_from_items(input_items),
-                allowed_tools=allowed_tools,
-            )
-            tool_definitions = [
-                self._to_chat_completion_tool(tool) for tool in toolset.tools()
-            ]
+        # Plain-text fast path: when no tool is allowed (WhatsApp auto-reply),
+        # skip the in-process MCP server and make a single chat completion.
+        no_tools = allowed_tools is not None and len(allowed_tools) == 0
 
-            failed_calls: dict[tuple[str, str], dict[str, object]] = {}
-
+        async with AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            timeout=settings.AI_PROVIDER_TIMEOUT_SECONDS,
+        ) as client:
             request: dict[str, Any] = {
                 "model": self.model,
                 "messages": messages,
@@ -175,120 +168,99 @@ class DeepSeek(AIPlatform):
             if self.supports_thinking:
                 request["reasoning_effort"] = self.reasoning_effort
                 request["extra_body"] = {"thinking": {"type": "enabled"}}
-            if tool_definitions:
-                request["tools"] = tool_definitions
 
-            response = await cast(Any, client.chat.completions.create)(**request)
+            if no_tools:
+                response = await cast(Any, client.chat.completions.create)(
+                    **request
+                )
+                return self._parse_response(response)
 
-            for _ in range(MAX_REMOTE_CALLS):
-                choice = response.choices[0].message
-                tool_calls = getattr(choice, "tool_calls", None) or []
-                if not tool_calls:
-                    break
+            async with mcp_session(actor_user_id=actor_user_id) as session:
+                mcp_tools = await get_tools(session)
+                toolset = ToolSet(
+                    tools_by_name={tool.name: tool for tool in mcp_tools},
+                    query=selection_query_from_items(input_items),
+                    allowed_tools=allowed_tools,
+                )
+                tool_definitions = [
+                    self._to_chat_completion_tool(tool)
+                    for tool in toolset.tools()
+                ]
+                if tool_definitions:
+                    request["tools"] = tool_definitions
 
-                assistant_message: dict[str, Any] = {
-                    "role": "assistant",
-                    "content": choice.content,
-                    "tool_calls": [
-                        {
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments,
-                            },
-                        }
-                        for tool_call in tool_calls
-                    ],
-                }
-                reasoning_content = getattr(choice, "reasoning_content", None)
-                if reasoning_content and self.supports_thinking:
-                    assistant_message["reasoning_content"] = reasoning_content
-                messages.append(assistant_message)
+                failed_calls: dict[tuple[str, str], dict[str, object]] = {}
 
-                function_outputs: list[dict[str, str]] = []
-                for tool_call in tool_calls:
-                    name = tool_call.function.name
-                    arguments = tool_call.function.arguments
-                    serialized: dict[str, object]
-                    is_error = False
+                response = await cast(Any, client.chat.completions.create)(
+                    **request
+                )
 
-                    if not toolset.available(name):
-                        serialized = {"error": "Tool is not available"}
-                        console.print(
-                            f"[yellow]>>> TOOL (unavailable, skipped): {name}[/]"
-                        )
-                    elif (name, arguments) in failed_calls:
-                        serialized = failed_calls[(name, arguments)]
-                        console.print(
-                            f"[yellow]>>> TOOL (cached error, skipped): {name}[/]"
-                        )
-                    else:
-                        if toolset.ensure(name):
-                            tool_definitions = [
-                                self._to_chat_completion_tool(tool)
-                                for tool in toolset.tools()
-                            ]
-                        console.print(f"[bold magenta]>>> TOOL: {name}[/]")
-                        try:
-                            args = json.loads(arguments or "{}")
-                            if not isinstance(args, dict):
-                                raise TypeError(
-                                    "Tool arguments must be a JSON object"
-                                )
-                            if args:
-                                console.print(
-                                    Syntax(
-                                        json.dumps(
-                                            args, indent=2, ensure_ascii=False
-                                        ),
-                                        "json",
-                                        word_wrap=True,
-                                        theme="monokai",
-                                        background_color="default",
-                                    )
-                                )
-                            result = await session.call_tool(name, args)
-                            serialized = OpenAI._serialize_tool_result(result)
-                            is_error = result.isError
-                            if is_error:
-                                console.print(
-                                    f"[bold red]<<< TOOL ERROR: {serialized}[/]"
-                                )
-                            else:
-                                console.print(
-                                    f"[bold green]<<< TOOL RESULT: {serialized}[/]"
-                                )
-                        except Exception as exc:  # noqa: BLE001 - tool failures feed back to the model
-                            serialized = {
-                                "error": f"{type(exc).__name__}: {exc}"
+                for _ in range(MAX_REMOTE_CALLS):
+                    choice = response.choices[0].message
+                    tool_calls = getattr(choice, "tool_calls", None) or []
+                    if not tool_calls:
+                        break
+
+                    assistant_message: dict[str, Any] = {
+                        "role": "assistant",
+                        "content": choice.content,
+                        "tool_calls": [
+                            {
+                                "id": tool_call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": tool_call.function.arguments,
+                                },
                             }
-                            is_error = True
-                            console.print(
-                                f"[bold red]<<< TOOL ERROR: {serialized}[/]"
-                            )
+                            for tool_call in tool_calls
+                        ],
+                    }
+                    reasoning_content = getattr(
+                        choice, "reasoning_content", None
+                    )
+                    if reasoning_content and self.supports_thinking:
+                        assistant_message["reasoning_content"] = (
+                            reasoning_content
+                        )
+                    messages.append(assistant_message)
 
-                        if is_error:
-                            failed_calls[(name, arguments)] = serialized
+                    results = await run_function_calls_parallel(
+                        function_calls=tool_calls,
+                        session=session,
+                        toolset=toolset,
+                        failed_calls=failed_calls,
+                        serialize_result=OpenAI._serialize_tool_result,
+                    )
+                    tool_definitions = [
+                        self._to_chat_completion_tool(tool)
+                        for tool in toolset.tools()
+                    ]
+                    if tool_definitions:
+                        request["tools"] = tool_definitions
 
-                    function_outputs.append(
+                    function_outputs: list[dict[str, str]] = [
                         {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
-                            "content": json.dumps(serialized, ensure_ascii=False),
+                            "content": json.dumps(
+                                serialized, ensure_ascii=False
+                            ),
                         }
+                        for tool_call, (serialized, _) in zip(
+                            tool_calls, results
+                        )
+                    ]
+                    messages.extend(function_outputs)
+                    response = await cast(Any, client.chat.completions.create)(
+                        **{**request, "messages": messages}
                     )
 
-                messages.extend(function_outputs)
-                response = await cast(Any, client.chat.completions.create)(
-                    **{**request, "messages": messages}
-                )
-
-            if not (response.choices[0].message.content or "").strip():
-                no_tools_request = {**request, "messages": messages}
-                no_tools_request.pop("tools", None)
-                response = await cast(Any, client.chat.completions.create)(
-                    **no_tools_request
-                )
+                if not (response.choices[0].message.content or "").strip():
+                    no_tools_request = {**request, "messages": messages}
+                    no_tools_request.pop("tools", None)
+                    response = await cast(Any, client.chat.completions.create)(
+                        **no_tools_request
+                    )
 
         return self._parse_response(response)

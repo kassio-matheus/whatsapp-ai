@@ -17,6 +17,7 @@ import {
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@workspace/ui/components/card"
+import { Input } from "@workspace/ui/components/input"
 import {
   Table,
   TableBody,
@@ -42,8 +43,10 @@ import { formatDate } from "@/lib/format"
 
 export default function CompanyDashboardPage() {
   const params = useParams<{ companyId: string }>()
-  const { token, user } = useApp()
+  const { token, user, companies } = useApp()
   const companyId = params.companyId ?? ""
+  const timezone =
+    companies.find((company) => company.id === companyId)?.timezone ?? "UTC"
 
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -52,6 +55,7 @@ export default function CompanyDashboardPage() {
   const [conversationCount, setConversationCount] = React.useState(0)
   const [memberDialog, setMemberDialog] = React.useState(false)
   const [deletingMember, setDeletingMember] = React.useState<Member | null>(null)
+  const [memberSearch, setMemberSearch] = React.useState("")
 
   React.useEffect(() => {
     if (!token) {
@@ -64,7 +68,7 @@ export default function CompanyDashboardPage() {
         const [membersResult, integrationsResult, conversationsResult] =
           await Promise.all([
             api.listMembers(companyId, currentToken),
-            api.listInstances(currentToken, companyId),
+            api.listInstances(currentToken, { company_id: companyId }),
             api.listConversations(currentToken, {
               company_id: companyId,
               limit: 100,
@@ -126,6 +130,11 @@ export default function CompanyDashboardPage() {
 
   const canManageMembers = user?.is_super_admin ?? false
 
+  const memberQuery = memberSearch.trim().toLowerCase()
+  const visibleMembers = memberQuery
+    ? members.filter((member) => member.email.toLowerCase().includes(memberQuery))
+    : members
+
   async function handleDeleteMember() {
     if (!token || !deletingMember) {
       return
@@ -185,12 +194,20 @@ export default function CompanyDashboardPage() {
         <CardHeader>
           <div className="flex items-center justify-between gap-2">
             <CardTitle>Members</CardTitle>
-            {canManageMembers ? (
-              <Button size="sm" onClick={() => setMemberDialog(true)}>
-                <Plus />
-                Add member
-              </Button>
-            ) : null}
+            <div className="flex items-center gap-2">
+              <Input
+                value={memberSearch}
+                onChange={(event) => setMemberSearch(event.target.value)}
+                placeholder="Search members…"
+                className="h-8 w-52"
+              />
+              {canManageMembers ? (
+                <Button size="sm" onClick={() => setMemberDialog(true)}>
+                  <Plus />
+                  Add member
+                </Button>
+              ) : null}
+            </div>
           </div>
         </CardHeader>
         {members.length === 0 ? (
@@ -199,6 +216,14 @@ export default function CompanyDashboardPage() {
               icon={<Users />}
               title="No members yet"
               description="Members can log in and access this company's WhatsApp workspace and AI chat."
+            />
+          </CardContent>
+        ) : visibleMembers.length === 0 ? (
+          <CardContent>
+            <EmptyState
+              icon={<Users />}
+              title="No matching members"
+              description="Try a different search term."
             />
           </CardContent>
         ) : (
@@ -213,7 +238,7 @@ export default function CompanyDashboardPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {members.map((member, index) => (
+              {visibleMembers.map((member, index) => (
                 <TableRow
                   key={member.id}
                   className="stagger-enter"
@@ -240,7 +265,7 @@ export default function CompanyDashboardPage() {
                     {member.is_super_admin ? "Super admin" : "Member"}
                   </TableCell>
                   <TableCell className="text-muted-foreground">
-                    {formatDate(member.created_at)}
+                    {formatDate(member.created_at, timezone)}
                   </TableCell>
                   {canManageMembers ? (
                     <TableCell>

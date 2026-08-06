@@ -17,7 +17,7 @@ from app.modules.ai.llm.common import friendly_provider_error
 from app.modules.ai.models import ChatFile, ChatSession, Message
 from app.modules.auth.models import User
 
-SUMMARY_THRESHOLD = 30
+SUMMARY_THRESHOLD = 60
 MAX_ACTIVE_SESSIONS = 100
 _ALLOWED_UPLOADS = {
     "application/pdf": {".pdf"},
@@ -159,14 +159,24 @@ def delete_session(*, session_id: uuid.UUID, user_id: uuid.UUID) -> None:
 
 
 def list_sessions(
-    *, user_id: uuid.UUID, limit: int = 20, offset: int = 0
+    *,
+    user_id: uuid.UUID,
+    title: str | None = None,
+    is_active: bool | None = None,
+    limit: int = 20,
+    offset: int = 0,
 ) -> list[ChatSession]:
     with Session(engine) as session:
         cleanup_expired()
+        conditions = [ChatSession.user_id == user_id]
+        if title is not None:
+            conditions.append(ChatSession.title.ilike(f"%{title}%"))
+        if is_active is not None:
+            conditions.append(ChatSession.is_active == is_active)
         stmt = (
             select(ChatSession)
             .options(selectinload(ChatSession.messages))
-            .where(ChatSession.user_id == user_id, ChatSession.is_active == True)
+            .where(*conditions)
             .order_by(desc(ChatSession.created_at))
             .offset(offset)
             .limit(limit)

@@ -18,6 +18,8 @@ from app.modules.whatsapp.models import (
     WhatsAppMessage,
 )
 from app.modules.whatsapp.service import _accessible_company_ids, _ensure_company_access
+from app.utils.filters import build_conditions
+from app.utils.timezone import resolve_company_timezone, to_company_timezone
 
 #: Message kinds that surface as operator notifications. Status/system updates
 #: and internal notes are filtered out to avoid noise.
@@ -159,14 +161,31 @@ def list_notifications(
     current_user: User,
     company_id: uuid.UUID | None = None,
     unread_only: bool = False,
+    type: str | None = None,
+    is_read: bool | None = None,
+    conversation_id: uuid.UUID | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> NotificationListResponse:
     resolved = _resolve_company_id(
         session=session, current_user=current_user, company_id=company_id)
+    timezone = resolve_company_timezone(session=session, company_id=resolved)
     conditions = [Notification.company_id == resolved]
     if unread_only:
         conditions.append(Notification.is_read.is_(False))
+    conditions.extend(
+        build_conditions(
+            Notification,
+            {
+                "type": "type",
+                "is_read": "is_read",
+                "conversation_id": "conversation_id",
+            },
+            type=type,
+            is_read=is_read,
+            conversation_id=conversation_id,
+        )
+    )
 
     items = session.exec(
         select(Notification)
@@ -183,7 +202,7 @@ def list_notifications(
     ).scalar_one()
 
     return NotificationListResponse(
-        items=[_notification_response(item) for item in items],
+        items=[_notification_response(item, timezone) for item in items],
         unread_count=unread_count,
     )
 
@@ -247,7 +266,9 @@ def mark_notification_read(
         session.add(notification)
         session.commit()
         session.refresh(notification)
-    return _notification_response(notification)
+    timezone = resolve_company_timezone(
+        session=session, company_id=notification.company_id)
+    return _notification_response(notification, timezone)
 
 
 def mark_all_notifications_read(
@@ -271,7 +292,10 @@ def mark_all_notifications_read(
         session.commit()
 
 
-def _notification_response(notification: Notification) -> NotificationResponse:
+def _notification_response(
+    notification: Notification,
+    timezone: str = "UTC",
+) -> NotificationResponse:
     return NotificationResponse(
         id=notification.id,
         type=notification.type,
@@ -281,5 +305,5 @@ def _notification_response(notification: Notification) -> NotificationResponse:
         integration_id=notification.integration_id,
         message_id=notification.message_id,
         is_read=notification.is_read,
-        created_at=notification.created_at,
+        created_at=to_company_timezone(notification.created_at, timezone),
     )
