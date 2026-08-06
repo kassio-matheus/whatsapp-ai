@@ -21,7 +21,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
-import { Input } from "@workspace/ui/components/input"
 import {
   Table,
   TableBody,
@@ -35,6 +34,7 @@ import { useApp } from "@/components/app-provider"
 import { WhatsAppSectionTabs } from "@/components/whatsapp/whatsapp-section-tabs"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
+import { DataToolbar } from "@/components/ui/filter-bar"
 import { PageHeader } from "@/components/ui/page-header"
 import { ContactDialog } from "@/components/whatsapp/contact-dialog"
 import {
@@ -44,6 +44,7 @@ import {
   type WhatsAppIntegration,
 } from "@/lib/api"
 import { formatDate } from "@/lib/format"
+import { useDebouncedValue } from "@/lib/use-debounced-value"
 
 export default function ContactsPage() {
   const params = useParams<{ companyId: string }>()
@@ -59,14 +60,23 @@ export default function ContactsPage() {
   const [editing, setEditing] = React.useState<WhatsAppContact | null>(null)
   const [deleting, setDeleting] = React.useState<WhatsAppContact | null>(null)
   const [search, setSearch] = React.useState("")
+  const [statusFilter, setStatusFilter] = React.useState("all")
+  const [searching, setSearching] = React.useState(false)
+  // Guards against a stale async response overwriting a newer search result.
+  const loadSeqRef = React.useRef(0)
 
   const load = React.useCallback(
     async (showLoader = false, filters?: { name?: string; phone_number?: string }) => {
       if (!token) {
         return
       }
+      const seq = loadSeqRef.current + 1
+      loadSeqRef.current = seq
       if (showLoader) {
         setIsLoading(true)
+      }
+      if (filters?.name || filters?.phone_number) {
+        setSearching(true)
       }
       try {
         const result = await api.listContacts(token, {
@@ -75,16 +85,24 @@ export default function ContactsPage() {
           phone_number: filters?.phone_number,
           limit: 200,
         })
-        setContacts(result)
-        setError(null)
+        if (loadSeqRef.current === seq) {
+          setContacts(result)
+          setError(null)
+          setSearching(false)
+        }
       } catch (err) {
-        if (err instanceof ApiClientError) {
-          setError(err.message)
-        } else {
-          setError("Failed to load contacts.")
+        if (loadSeqRef.current === seq) {
+          if (err instanceof ApiClientError) {
+            setError(err.message)
+          } else {
+            setError("Failed to load contacts.")
+          }
+          setSearching(false)
         }
       } finally {
-        setIsLoading(false)
+        if (showLoader && loadSeqRef.current === seq) {
+          setIsLoading(false)
+        }
       }
     },
     [token, companyId],
@@ -94,17 +112,29 @@ export default function ContactsPage() {
     void load(true)
   }, [load])
 
+  const debouncedSearch = useDebouncedValue(search, 300)
+  const trimmedSearch = debouncedSearch.trim()
+
   React.useEffect(() => {
-    const trimmed = search.trim()
-    if (!trimmed) {
+    if (trimmedSearch) {
+      void load(false, {
+        name: trimmedSearch,
+        phone_number: trimmedSearch,
+      })
+    } else {
       void load(false)
-      return
     }
-    const handle = window.setTimeout(() => {
-      void load(false, { name: trimmed, phone_number: trimmed })
-    }, 300)
-    return () => window.clearTimeout(handle)
-  }, [search, load])
+  }, [trimmedSearch, load])
+
+  const visibleContacts = React.useMemo(() => {
+    if (statusFilter === "blocked") {
+      return contacts.filter((contact) => contact.is_blocked)
+    }
+    if (statusFilter === "active") {
+      return contacts.filter((contact) => !contact.is_blocked)
+    }
+    return contacts
+  }, [contacts, statusFilter])
 
   const [integrations, setIntegrations] = React.useState<WhatsAppIntegration[]>([])
 
@@ -147,12 +177,33 @@ export default function ContactsPage() {
         </Button>
       </PageHeader>
 
-      <div className="flex items-center gap-2">
-        <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search by name or phone…"
-          className="max-w-sm"
+      <div className="flex flex-col gap-2">
+        <DataToolbar
+          search={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search by name or phone…"
+          searchLoading={searching}
+          searchShortcut="/"
+          filters={[
+            {
+              id: "status",
+              label: "Status",
+              value: statusFilter,
+              onValueChange: (value) => setStatusFilter(value),
+              options: [
+                { value: "all", label: "All statuses" },
+                { value: "active", label: "Active" },
+                { value: "blocked", label: "Blocked" },
+              ],
+              allLabel: "All statuses",
+            },
+          ]}
+          resultCount={visibleContacts.length}
+          totalCount={contacts.length}
+          onReset={() => {
+            setSearch("")
+            setStatusFilter("all")
+          }}
         />
       </div>
 
@@ -191,6 +242,25 @@ export default function ContactsPage() {
             }
           />
         </Card>
+      ) : visibleContacts.length === 0 ? (
+        <Card className="p-0">
+          <EmptyState
+            icon={<UserRound />}
+            title="No matching contacts"
+            description="Try a different search term or filter."
+            action={
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSearch("")
+                  setStatusFilter("all")
+                }}
+              >
+                Clear filters
+              </Button>
+            }
+          />
+        </Card>
       ) : (
         <Card className="p-0">
           <Table>
@@ -204,7 +274,7 @@ export default function ContactsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {contacts.map((contact, index) => (
+              {visibleContacts.map((contact, index) => (
                 <TableRow
                   key={contact.id}
                   className="stagger-enter"

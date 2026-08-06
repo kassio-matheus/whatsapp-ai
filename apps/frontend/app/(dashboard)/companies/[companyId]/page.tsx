@@ -17,7 +17,6 @@ import {
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@workspace/ui/components/card"
-import { Input } from "@workspace/ui/components/input"
 import {
   Table,
   TableBody,
@@ -32,6 +31,7 @@ import { MemberDialog } from "@/components/companies/member-dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { PageContainer, PageHeader } from "@/components/ui/page-header"
+import { SearchInput } from "@/components/ui/search-input"
 import { StatCard } from "@/components/ui/stat-card"
 import {
   api,
@@ -131,9 +131,15 @@ export default function CompanyDashboardPage() {
   const canManageMembers = user?.is_super_admin ?? false
 
   const memberQuery = memberSearch.trim().toLowerCase()
-  const visibleMembers = memberQuery
-    ? members.filter((member) => member.email.toLowerCase().includes(memberQuery))
-    : members
+  const visibleMembers = React.useMemo(
+    () =>
+      memberQuery
+        ? members.filter((member) =>
+            member.email.toLowerCase().includes(memberQuery)
+          )
+        : members,
+    [members, memberQuery]
+  )
 
   async function handleDeleteMember() {
     if (!token || !deletingMember) {
@@ -195,11 +201,12 @@ export default function CompanyDashboardPage() {
           <div className="flex items-center justify-between gap-2">
             <CardTitle>Members</CardTitle>
             <div className="flex items-center gap-2">
-              <Input
+              <SearchInput
                 value={memberSearch}
-                onChange={(event) => setMemberSearch(event.target.value)}
+                onValueChange={setMemberSearch}
                 placeholder="Search members…"
-                className="h-8 w-52"
+                shortcut="/"
+                containerClassName="w-52 sm:w-60"
               />
               {canManageMembers ? (
                 <Button size="sm" onClick={() => setMemberDialog(true)}>

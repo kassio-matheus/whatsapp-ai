@@ -17,7 +17,6 @@ import {
   Plus,
   Radio,
   RefreshCw,
-  Search,
   Send,
   ShieldAlert,
   ShieldCheck,
@@ -57,6 +56,7 @@ import { cn } from "@workspace/ui/lib/utils"
 import { useApp } from "@/components/app-provider"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
+import { DataToolbar } from "@/components/ui/filter-bar"
 import { PageHeader } from "@/components/ui/page-header"
 import { WhatsAppSectionTabs } from "@/components/whatsapp/whatsapp-section-tabs"
 import {
@@ -197,6 +197,7 @@ export default function TemplatesPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [query, setQuery] = React.useState("")
   const [status, setStatus] = React.useState("all")
+  const [category, setCategory] = React.useState("all")
   const [createOpen, setCreateOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<WhatsAppCloudApiTemplate | null>(
     null
@@ -288,26 +289,38 @@ export default function TemplatesPage() {
     })
   }, [instanceId, loadTemplates, params.companyId, token])
 
-  const visibleTemplates = templates.filter((template) => {
-    const matchesQuery =
-      `${template.name} ${template.language} ${template.category ?? ""}`
-        .toLowerCase()
-        .includes(query.toLowerCase())
-    return (
-      matchesQuery &&
-      (status === "all" || template.status.toUpperCase() === status)
-    )
-  })
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleTemplates = React.useMemo(
+    () =>
+      templates.filter((template) => {
+        const haystack =
+          `${template.name} ${template.language} ${template.category ?? ""} ${templateBody(template)}`
+            .toLowerCase()
+        const matchesQuery = haystack.includes(normalizedQuery)
+        return (
+          matchesQuery &&
+          (status === "all" || template.status.toUpperCase() === status) &&
+          (category === "all" || template.category === category)
+        )
+      }),
+    [templates, normalizedQuery, status, category]
+  )
 
-  const approvedCount = templates.filter(
-    (template) => template.status.toUpperCase() === "APPROVED"
-  ).length
-  const pendingCount = templates.filter(
-    (template) => template.status.toUpperCase() === "PENDING"
-  ).length
-  const rejectedCount = templates.filter(
-    (template) => template.status.toUpperCase() === "REJECTED"
-  ).length
+  const counts = React.useMemo(
+    () => ({
+      approved: templates.filter(
+        (template) => template.status.toUpperCase() === "APPROVED"
+      ).length,
+      pending: templates.filter(
+        (template) => template.status.toUpperCase() === "PENDING"
+      ).length,
+      rejected: templates.filter(
+        (template) => template.status.toUpperCase() === "REJECTED"
+      ).length,
+    }),
+    [templates]
+  )
+  const { approved: approvedCount, pending: pendingCount, rejected: rejectedCount } = counts
 
   async function handleDelete() {
     if (!token || !instanceId || !deleting) return
@@ -448,37 +461,48 @@ export default function TemplatesPage() {
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="relative w-full sm:max-w-sm">
-              <Search className="pointer-events-none absolute start-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                className="ps-8"
-                placeholder="Search templates"
-              />
-            </div>
-            <Select
-              items={[
-                { value: "all", label: "All statuses" },
-                { value: "APPROVED", label: "Approved" },
-                { value: "PENDING", label: "In review" },
-                { value: "REJECTED", label: "Rejected" },
-              ]}
-              value={status}
-              onValueChange={(value) => setStatus(String(value))}
-            >
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All statuses</SelectItem>
-                <SelectItem value="APPROVED">Approved</SelectItem>
-                <SelectItem value="PENDING">In review</SelectItem>
-                <SelectItem value="REJECTED">Rejected</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <DataToolbar
+            search={query}
+            onSearchChange={setQuery}
+            searchPlaceholder="Search by name, language or content…"
+            searchLoading={syncing}
+            searchShortcut="/"
+            filters={[
+              {
+                id: "status",
+                label: "Status",
+                value: status,
+                onValueChange: (value) => setStatus(String(value)),
+                options: [
+                  { value: "all", label: "All statuses" },
+                  { value: "APPROVED", label: "Approved" },
+                  { value: "PENDING", label: "In review" },
+                  { value: "REJECTED", label: "Rejected" },
+                ],
+                allLabel: "All statuses",
+              },
+              {
+                id: "category",
+                label: "Category",
+                value: category,
+                onValueChange: (value) => setCategory(String(value)),
+                options: [
+                  { value: "all", label: "All categories" },
+                  { value: "MARKETING", label: "Marketing" },
+                  { value: "UTILITY", label: "Utility" },
+                  { value: "AUTHENTICATION", label: "Authentication" },
+                ],
+                allLabel: "All categories",
+              },
+            ]}
+            resultCount={visibleTemplates.length}
+            totalCount={templates.length}
+            onReset={() => {
+              setQuery("")
+              setStatus("all")
+              setCategory("all")
+            }}
+          />
 
           {error ? (
             <div className="flex items-center gap-2 border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">

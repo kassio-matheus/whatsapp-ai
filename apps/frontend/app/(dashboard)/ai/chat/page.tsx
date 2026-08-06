@@ -40,6 +40,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Markdown } from "@/components/ui/markdown"
 import { PageHeader } from "@/components/ui/page-header"
+import { SearchInput } from "@/components/ui/search-input"
 import { compactPrompt } from "@/lib/token-saver"
 import {
   api,
@@ -74,13 +75,18 @@ export default function AIPage() {
   const messagesEndRef = React.useRef<HTMLDivElement>(null)
 
   const selected = sessions.find((session) => session.id === selectedId) ?? null
-  const filteredSessions = sessionSearch.trim()
-    ? sessions.filter((session) =>
-        (session.title || "Untitled session")
-          .toLowerCase()
-          .includes(sessionSearch.trim().toLowerCase()),
-      )
-    : sessions
+  const sessionQuery = sessionSearch.trim().toLowerCase()
+  const filteredSessions = React.useMemo(
+    () =>
+      sessionQuery
+        ? sessions.filter((session) =>
+            (session.title || "Untitled session")
+              .toLowerCase()
+              .includes(sessionQuery)
+          )
+        : sessions,
+    [sessions, sessionQuery]
+  )
 
   const loadSessions = React.useCallback(
     async (showLoader = false) => {
@@ -269,12 +275,15 @@ export default function AIPage() {
         <div className="grid min-h-0 max-h-[80vh] flex-1 gap-3 lg:grid-cols-[300px_1fr]">
           <Card className="flex min-h-0 flex-col p-0">
             <div className="border-b p-2">
-              <input
+              <SearchInput
                 value={sessionSearch}
-                onChange={(event) => setSessionSearch(event.target.value)}
+                onValueChange={setSessionSearch}
                 placeholder="Search sessions…"
-                className="h-8 w-full rounded-none border border-border bg-muted/40 px-2 text-xs outline-none placeholder:text-muted-foreground focus:border-primary/40"
+                shortcut="/"
               />
+              <p className="mt-1.5 text-[10px] text-muted-foreground tabular-nums">
+                {filteredSessions.length} of {sessions.length} sessions
+              </p>
             </div>
             <ScrollArea className="flex-1">
               <ul className="flex flex-col">

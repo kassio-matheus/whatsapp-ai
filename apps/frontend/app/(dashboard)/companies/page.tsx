@@ -21,7 +21,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
-import { Input } from "@workspace/ui/components/input"
 import {
   Table,
   TableBody,
@@ -36,6 +35,7 @@ import { CompanyDialog } from "@/components/companies/company-dialog"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { PageContainer, PageHeader } from "@/components/ui/page-header"
+import { SearchInput } from "@/components/ui/search-input"
 import { api } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 
@@ -101,11 +101,15 @@ export default function CompaniesPage() {
   const deleteTarget = companies.find((company) => company.id === deleting)
 
   const query = search.trim().toLowerCase()
-  const visibleCompanies = query
-    ? companies.filter((company) =>
-        company.name.toLowerCase().includes(query)
-      )
-    : companies
+  const visibleCompanies = React.useMemo(
+    () =>
+      query
+        ? companies.filter((company) =>
+            company.name.toLowerCase().includes(query)
+          )
+        : companies,
+    [companies, query]
+  )
 
   if (isLoading) {
     return (
@@ -145,13 +149,23 @@ export default function CompaniesPage() {
         </Card>
       ) : (
         <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-2">
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search companies…"
-              className="max-w-xs"
-            />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <SearchInput
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search companies…"
+                shortcut="/"
+                containerClassName="w-full sm:w-72"
+              />
+              <Badge
+                variant={search.trim() ? "outline" : "secondary"}
+                className="shrink-0 text-[10px]"
+              >
+                {visibleCompanies.length}
+                {search.trim() ? ` / ${companies.length}` : ""} companies
+              </Badge>
+            </div>
             <Button variant="outline" onClick={() => setDialogOpen(true)}>
               <Plus />
               New company

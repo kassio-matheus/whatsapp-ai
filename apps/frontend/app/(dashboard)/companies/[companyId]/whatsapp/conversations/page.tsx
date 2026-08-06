@@ -14,6 +14,7 @@ import {
   Plus,
   Radio,
   RotateCcw,
+  Search,
   StickyNote,
   Trash2,
 } from "lucide-react"
@@ -27,8 +28,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@workspace/ui/components/dropdown-menu"
-import { Input } from "@workspace/ui/components/input"
 import { ScrollArea } from "@workspace/ui/components/scroll-area"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@workspace/ui/components/select"
 import { Skeleton } from "@workspace/ui/components/skeleton"
 import { Switch } from "@workspace/ui/components/switch"
 import { cn } from "@workspace/ui/lib/utils"
@@ -39,6 +46,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Markdown } from "@/components/ui/markdown"
 import { PageHeader } from "@/components/ui/page-header"
+import { SearchInput } from "@/components/ui/search-input"
 import { ConversationDialog } from "@/components/whatsapp/conversation-dialog"
 import { compactPrompt } from "@/lib/token-saver"
 import {
@@ -59,6 +67,7 @@ import {
   type WhatsAppMessage,
 } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
+import { useDebouncedValue } from "@/lib/use-debounced-value"
 
 const STATUS_BADGE: Record<
   ConversationStatus,
@@ -146,6 +155,10 @@ export default function ConversationsPage() {
   const [deletingMessage, setDeletingMessage] =
     React.useState<WhatsAppMessage | null>(null)
   const [search, setSearch] = React.useState("")
+  const [statusFilter, setStatusFilter] = React.useState("all")
+  const [searching, setSearching] = React.useState(false)
+  // Guards against a stale async response overwriting a newer filtered load.
+  const loadConversationsSeqRef = React.useRef(0)
 
   const messagesViewportRef = React.useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = React.useRef(true)
@@ -198,53 +211,83 @@ export default function ConversationsPage() {
   const selected =
     conversations.find((conversation) => conversation.id === selectedId) ?? null
 
+  // Keeps the active search/status filters applied on background refreshes
+  // (SSE events and the polling fallback), so the list never "resets".
+  const activeFiltersRef = React.useRef<{
+    phone?: string
+    title?: string
+    status?: string
+  }>({})
+
   const loadConversations = React.useCallback(
     async (
       showLoader = false,
-      filters?: { phone?: string; title?: string }
+      filters?: { phone?: string; title?: string; status?: string }
     ) => {
       if (!token) {
         return
       }
+      if (filters) {
+        activeFiltersRef.current = filters
+      }
+      const effectiveFilters = filters ?? activeFiltersRef.current
+      const isUserDriven = Boolean(filters)
+      const seq = loadConversationsSeqRef.current + 1
+      loadConversationsSeqRef.current = seq
       if (showLoader) {
         setIsLoading(true)
+      }
+      if (
+        isUserDriven &&
+        (effectiveFilters.phone || effectiveFilters.title || effectiveFilters.status)
+      ) {
+        setSearching(true)
       }
       try {
         const [conversationsResult, integrationsResult, contactsResult] =
           await Promise.all([
             api.listConversations(token, {
               company_id: companyId,
-              phone: filters?.phone,
-              title: filters?.title,
+              phone: effectiveFilters.phone,
+              title: effectiveFilters.title,
+              status: effectiveFilters.status,
               limit: 100,
             }),
             api.listInstances(token, { company_id: companyId }),
             api.listContacts(token, { company_id: companyId, limit: 200 }),
           ])
-        setConversations(conversationsResult)
-        setIntegrations(integrationsResult)
-        setContacts(contactsResult)
-        setError(null)
-        setSelectedId((previous) => {
-          if (previous && conversationsResult.some((c) => c.id === previous)) {
-            return previous
-          }
-          const target = new URLSearchParams(window.location.search).get(
-            "conversation"
-          )
-          if (target && conversationsResult.some((c) => c.id === target)) {
-            return target
-          }
-          return conversationsResult[0]?.id ?? null
-        })
+        if (loadConversationsSeqRef.current === seq) {
+          setConversations(conversationsResult)
+          setIntegrations(integrationsResult)
+          setContacts(contactsResult)
+          setError(null)
+          setSearching(false)
+          setSelectedId((previous) => {
+            if (previous && conversationsResult.some((c) => c.id === previous)) {
+              return previous
+            }
+            const target = new URLSearchParams(window.location.search).get(
+              "conversation"
+            )
+            if (target && conversationsResult.some((c) => c.id === target)) {
+              return target
+            }
+            return conversationsResult[0]?.id ?? null
+          })
+        }
       } catch (err) {
-        if (err instanceof ApiClientError) {
-          setError(err.message)
-        } else {
-          setError("Failed to load conversations.")
+        if (loadConversationsSeqRef.current === seq) {
+          if (err instanceof ApiClientError) {
+            setError(err.message)
+          } else {
+            setError("Failed to load conversations.")
+          }
+          setSearching(false)
         }
       } finally {
-        setIsLoading(false)
+        if (showLoader && loadConversationsSeqRef.current === seq) {
+          setIsLoading(false)
+        }
       }
     },
     [token, companyId]
@@ -284,20 +327,21 @@ export default function ConversationsPage() {
     void loadConversations(true)
   }, [loadConversations])
 
+  const debouncedSearch = useDebouncedValue(search, 300)
+  const trimmedSearch = debouncedSearch.trim()
+
+  const skipFirstRenderRef = React.useRef(true)
   React.useEffect(() => {
-    const trimmed = search.trim()
-    if (!trimmed) {
-      void loadConversations(false)
+    if (skipFirstRenderRef.current) {
+      skipFirstRenderRef.current = false
       return
     }
-    const handle = window.setTimeout(() => {
-      void loadConversations(false, {
-        phone: trimmed,
-        title: trimmed,
-      })
-    }, 300)
-    return () => window.clearTimeout(handle)
-  }, [search, loadConversations])
+    void loadConversations(false, {
+      phone: trimmedSearch || undefined,
+      title: trimmedSearch || undefined,
+      status: statusFilter === "all" ? undefined : statusFilter,
+    })
+  }, [trimmedSearch, statusFilter, loadConversations])
 
   React.useEffect(() => {
     if (!token) {
@@ -680,31 +724,78 @@ export default function ConversationsPage() {
 
       {conversations.length === 0 ? (
         <EmptyState
-          icon={<Plus />}
-          title="No conversations yet"
-          description="Create a conversation to start messaging a contact."
+          icon={trimmedSearch || statusFilter !== "all" ? <Search /> : <Plus />}
+          title={
+            trimmedSearch || statusFilter !== "all"
+              ? "No matching conversations"
+              : "No conversations yet"
+          }
+          description={
+            trimmedSearch || statusFilter !== "all"
+              ? "Try a different search term or filter."
+              : "Create a conversation to start messaging a contact."
+          }
           action={
-            <Button
-              onClick={() => {
-                setEditingConversation(null)
-                setDialogOpen(true)
-              }}
-            >
-              <Plus />
-              New conversation
-            </Button>
+            trimmedSearch || statusFilter !== "all" ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSearch("")
+                  setStatusFilter("all")
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : (
+              <Button
+                onClick={() => {
+                  setEditingConversation(null)
+                  setDialogOpen(true)
+                }}
+              >
+                <Plus />
+                New conversation
+              </Button>
+            )
           }
         />
       ) : (
         <div className="grid h-[75dvh] gap-3 lg:grid-cols-[320px_1fr]">
           <Card className="p-0">
-            <div className="border-b p-2">
-              <Input
+            <div className="flex flex-col gap-2 border-b p-2">
+              <SearchInput
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onValueChange={setSearch}
                 placeholder="Search by phone or title…"
-                className="h-8"
+                loading={searching}
+                shortcut="/"
               />
+              <div className="flex items-center justify-between gap-2">
+                <Select
+                  items={[
+                    { value: "all", label: "All statuses" },
+                    { value: "open", label: "Open" },
+                    { value: "pending", label: "Pending" },
+                    { value: "closed", label: "Closed" },
+                  ]}
+                  value={statusFilter}
+                  onValueChange={(value) => setStatusFilter(String(value))}
+                >
+                  <SelectTrigger className="h-7 w-36 py-1 text-[11px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                    <SelectItem value="closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-[10px] text-muted-foreground tabular-nums">
+                  {conversations.length}{" "}
+                  {conversations.length === 1 ? "conversation" : "conversations"}
+                </span>
+              </div>
             </div>
             <ScrollArea className="h-[472px]">
               <ul className="flex flex-col">
