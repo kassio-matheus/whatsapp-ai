@@ -5,9 +5,12 @@ import { useParams } from "next/navigation"
 import {
   Bot,
   CircleAlert,
+  FileText,
   LoaderCircle,
   Save,
   ShieldCheck,
+  Trash2,
+  Upload,
   UserRound,
   Wrench,
 } from "lucide-react"
@@ -33,9 +36,12 @@ import { WhatsAppSectionTabs } from "@/components/whatsapp/whatsapp-section-tabs
 import {
   api,
   ApiClientError,
+  type AIDocumentStatus,
+  type CompanyKnowledge,
   type McpToolInfo,
   type WhatsAppAISettings,
 } from "@/lib/api"
+import { cn } from "@workspace/ui/lib/utils"
 
 export default function WhatsAppAIPage() {
   const params = useParams<{ companyId: string }>()
@@ -55,6 +61,14 @@ export default function WhatsAppAIPage() {
   const [cooldown, setCooldown] = React.useState("20")
   const [allowedTools, setAllowedTools] = React.useState<string[]>([])
 
+  // Company knowledge (injected into the system prompt)
+  const [knowledge, setKnowledge] = React.useState<CompanyKnowledge | null>(null)
+  const [companyInfo, setCompanyInfo] = React.useState("")
+  const [knowledgeSaving, setKnowledgeSaving] = React.useState(false)
+  const [uploadingDocument, setUploadingDocument] = React.useState(false)
+  const [deletingDocument, setDeletingDocument] = React.useState<string | null>(null)
+  const documentInputRef = React.useRef<HTMLInputElement>(null)
+
   const load = React.useCallback(
     async (showLoader = false) => {
       if (!token) {
@@ -64,9 +78,10 @@ export default function WhatsAppAIPage() {
         setIsLoading(true)
       }
       try {
-        const [settingsResult, toolsResult] = await Promise.all([
+        const [settingsResult, toolsResult, knowledgeResult] = await Promise.all([
           api.getCompanyAISettings(companyId, token),
           api.listCompanyAIMcpTools(companyId, token),
+          api.getCompanyKnowledge(companyId, token),
         ])
         setSettings(settingsResult)
         setEnabled(settingsResult.enabled)
@@ -75,6 +90,8 @@ export default function WhatsAppAIPage() {
         setCooldown(String(settingsResult.reply_cooldown_seconds))
         setAllowedTools(settingsResult.allowed_contact_tools)
         setTools(toolsResult.tools)
+        setKnowledge(knowledgeResult)
+        setCompanyInfo(knowledgeResult.company_info ?? "")
         setError(null)
       } catch (err) {
         setError(
@@ -133,6 +150,87 @@ export default function WhatsAppAIPage() {
       )
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleSaveKnowledge() {
+    if (!token) {
+      return
+    }
+    setKnowledgeSaving(true)
+    setError(null)
+    try {
+      const result = await api.updateCompanyKnowledge(
+        companyId,
+        { company_info: companyInfo.trim() || null },
+        token,
+      )
+      setKnowledge(result)
+      setCompanyInfo(result.company_info ?? "")
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError
+          ? err.message
+          : "Could not save the company information.",
+      )
+    } finally {
+      setKnowledgeSaving(false)
+    }
+  }
+
+  async function handleUploadDocument(file: File) {
+    if (!token) {
+      return
+    }
+    setUploadingDocument(true)
+    setError(null)
+    try {
+      const document = await api.uploadCompanyDocument(companyId, file, token)
+      setKnowledge((previous) => ({
+        company_id: companyId,
+        company_info: companyInfo.trim() || null,
+        documents: [...(previous?.documents ?? []), document],
+      }))
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError
+          ? err.message
+          : "Could not upload the document.",
+      )
+    } finally {
+      setUploadingDocument(false)
+      if (documentInputRef.current) {
+        documentInputRef.current.value = ""
+      }
+    }
+  }
+
+  async function handleDeleteDocument(documentId: string) {
+    if (!token) {
+      return
+    }
+    setDeletingDocument(documentId)
+    setError(null)
+    try {
+      await api.deleteCompanyDocument(companyId, documentId, token)
+      setKnowledge((previous) =>
+        previous
+          ? {
+              ...previous,
+              documents: previous.documents.filter(
+                (document) => document.id !== documentId,
+              ),
+            }
+          : previous,
+      )
+    } catch (err) {
+      setError(
+        err instanceof ApiClientError
+          ? err.message
+          : "Could not delete the document.",
+      )
+    } finally {
+      setDeletingDocument(null)
     }
   }
 
@@ -234,6 +332,122 @@ export default function WhatsAppAIPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-xs">
+                <FileText className="size-4" />
+                Company knowledge base
+              </CardTitle>
+              <CardDescription>
+                Company information and documents that are injected into the AI
+                assistant's system prompt, so it answers from your business
+                data. Uploaded documents are read by the document-reading AI.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="ai-company-info">Company information</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleSaveKnowledge()}
+                    disabled={knowledgeSaving}
+                  >
+                    {knowledgeSaving ? (
+                      <LoaderCircle className="size-3 animate-spin" />
+                    ) : (
+                      <Save className="size-3" />
+                    )}
+                    Save info
+                  </Button>
+                </div>
+                <Textarea
+                  id="ai-company-info"
+                  value={companyInfo}
+                  onChange={(event) => setCompanyInfo(event.target.value)}
+                  placeholder="Describe the company: products, services, prices, policies, tone of voice... Everything here is given to the AI in the system prompt."
+                  className="min-h-24"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Free-form description of the business. Shared with the AI Chat
+                  of the company's members as well.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label>Documents</Label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => documentInputRef.current?.click()}
+                    disabled={uploadingDocument}
+                  >
+                    {uploadingDocument ? (
+                      <LoaderCircle className="size-3 animate-spin" />
+                    ) : (
+                      <Upload className="size-3" />
+                    )}
+                    Upload
+                  </Button>
+                  <input
+                    ref={documentInputRef}
+                    type="file"
+                    accept=".txt,.pdf,.jpg,.jpeg,.png"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (file) {
+                        void handleUploadDocument(file)
+                      }
+                    }}
+                  />
+                </div>
+
+                {knowledge?.documents.length ? (
+                  <ul className="flex flex-col divide-y">
+                    {knowledge.documents.map((document) => (
+                      <li
+                        key={document.id}
+                        className="flex items-center gap-3 py-2"
+                      >
+                        <FileText className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate text-xs">
+                          {document.filename}
+                        </span>
+                        <ExtractionBadge
+                          status={document.extraction_status}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Delete ${document.filename}`}
+                          onClick={() => void handleDeleteDocument(document.id)}
+                          disabled={deletingDocument === document.id}
+                        >
+                          {deletingDocument === document.id ? (
+                            <LoaderCircle className="size-3 animate-spin" />
+                          ) : (
+                            <Trash2 className="size-3" />
+                          )}
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-[11px] text-muted-foreground">
+                    No documents yet. Upload a PDF, image or text file to give
+                    the assistant more context.
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-xs">
                 <ShieldCheck className="size-4" />
                 Trusted numbers (system owners)
               </CardTitle>
@@ -319,5 +533,26 @@ export default function WhatsAppAIPage() {
         </form>
       )}
     </PageContainer>
+  )
+}
+
+const EXTRACTION_LABELS: Record<AIDocumentStatus, string> = {
+  pending: "Waiting to be read",
+  processing: "Reading…",
+  extracted: "Read",
+  failed: "Failed",
+}
+
+function ExtractionBadge({ status }: { status: AIDocumentStatus }) {
+  const colored =
+    status === "extracted"
+      ? "bg-green-50 text-green-700"
+      : status === "failed"
+        ? "bg-red-50 text-red-700"
+        : "bg-muted text-muted-foreground"
+  return (
+    <Badge variant="outline" className={cn("text-[10px]", colored)}>
+      {EXTRACTION_LABELS[status]}
+    </Badge>
   )
 }

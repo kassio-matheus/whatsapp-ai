@@ -1,6 +1,7 @@
 import { Geist_Mono, Inter } from "next/font/google"
 
 import "@workspace/ui/globals.css"
+import { NuqsAdapter } from "nuqs/adapters/next/app"
 import { ThemeProvider } from "@/components/theme-provider"
 import { cn } from "@workspace/ui/lib/utils"
 
@@ -28,7 +29,17 @@ export default function RootLayout({
       )}
     >
       <body suppressHydrationWarning>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>
+          <NuqsAdapter
+            defaultOptions={{
+              history: "replace",
+              scroll: false,
+              clearOnDefault: true,
+            }}
+          >
+            {children}
+          </NuqsAdapter>
+        </ThemeProvider>
       </body>
     </html>
   )

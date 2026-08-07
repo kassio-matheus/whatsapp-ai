@@ -141,6 +141,7 @@ def _media_body(
     filename = metadata.get("filename")
     if message_type == "document" and isinstance(filename, str) and filename:
         media["filename"] = filename
+
     return media
 
 
@@ -166,7 +167,17 @@ def _build_message_payload(*, to: str, message: WhatsAppMessage) -> dict[str, An
             "preview_url": metadata.get("preview_url") is True,
             "body": body,
         }
-    elif message_type in {"image", "audio", "video", "document", "sticker"}:
+    elif message_type == "audio":
+        payload[message_type] = _media_body(
+            message=message,
+            message_type=message_type,
+        )
+
+        payload["audio"] = {
+            "link": message.media_url,
+            "voice": True
+        }
+    elif message_type in {"image",  "video", "document", "sticker"}:
         payload[message_type] = _media_body(
             message=message,
             message_type=message_type,
@@ -192,6 +203,7 @@ def _build_message_payload(*, to: str, message: WhatsAppMessage) -> dict[str, An
             f"Unsupported Meta WhatsApp message type: {message_type}",
             status_code=422,
         )
+
     return payload
 
 
@@ -245,7 +257,8 @@ class MetaCloudApiClient:
                 error_payload = json.loads(response_body.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 error_payload = {}
-            raise _error_from_payload(error_payload, status_code=exc.code) from exc
+            raise _error_from_payload(
+                error_payload, status_code=exc.code) from exc
         except URLError as exc:
             raise MetaCloudApiError(
                 "Could not reach Meta Graph API", status_code=502
@@ -264,7 +277,8 @@ class MetaCloudApiClient:
                 status_code=status_code,
             )
         if "error" in response_payload:
-            raise _error_from_payload(response_payload, status_code=status_code)
+            raise _error_from_payload(
+                response_payload, status_code=status_code)
         return response_payload
 
     def get_business_account(self) -> dict[str, Any]:
@@ -278,11 +292,13 @@ class MetaCloudApiClient:
         response = self._request(
             "GET",
             f"/{self.credentials.business_account_id}/phone_numbers",
-            params={"fields": ("id,display_phone_number,verified_name,quality_rating")},
+            params={"fields": (
+                "id,display_phone_number,verified_name,quality_rating")},
         )
         items = response.get("data", [])
         if not isinstance(items, list):
-            raise MetaCloudApiError("Meta returned an invalid phone number list")
+            raise MetaCloudApiError(
+                "Meta returned an invalid phone number list")
         return [
             CloudApiPhoneNumber(
                 id=str(item["id"]),
@@ -384,7 +400,8 @@ class MetaCloudApiClient:
         )
         items = response.get("data", [])
         if not isinstance(items, list):
-            raise MetaCloudApiError("Meta returned an invalid template catalog")
+            raise MetaCloudApiError(
+                "Meta returned an invalid template catalog")
 
         templates: list[CloudApiMessageTemplate] = []
         for item in items:
@@ -398,8 +415,10 @@ class MetaCloudApiClient:
                     name=str(item["name"]),
                     language=str(item.get("language") or ""),
                     status=str(item.get("status") or "UNKNOWN"),
-                    category=(str(item["category"]) if item.get("category") else None),
-                    components=[part for part in components if isinstance(part, dict)]
+                    category=(str(item["category"])
+                              if item.get("category") else None),
+                    components=[
+                        part for part in components if isinstance(part, dict)]
                     if isinstance(components, list)
                     else [],
                     quality_score=quality_score
@@ -414,7 +433,8 @@ class MetaCloudApiClient:
             )
         paging = response.get("paging")
         cursors = paging.get("cursors") if isinstance(paging, dict) else None
-        next_cursor = cursors.get("after") if isinstance(cursors, dict) else None
+        next_cursor = cursors.get("after") if isinstance(
+            cursors, dict) else None
         return CloudApiMessageTemplatePage(data=templates, next_cursor=next_cursor)
 
     def create_message_template(self, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -456,14 +476,22 @@ class MetaCloudApiClient:
             normalized_to = format_phone_number_for_meta(to)
         except ValueError as exc:
             raise MetaCloudApiError(str(exc), status_code=422) from exc
-        payload = _build_message_payload(to=normalized_to, message=message)
-        response = self._request(
-            "POST",
-            f"/{self.credentials.phone_number_id}/messages",
-            payload=payload,
-        )
-        messages = response.get("messages", [])
-        external_id = messages[0].get("id") if messages else None
+
+        try:
+            payload = _build_message_payload(to=normalized_to, message=message)
+            response = self._request(
+                "POST",
+                f"/{self.credentials.phone_number_id}/messages",
+                payload=payload,
+            )
+            print(payload)
+            print(response)
+            messages = response.get("messages", [])
+
+            external_id = messages[0].get("id") if messages else None
+        except ValueError as exc:
+            raise MetaCloudApiError(str(exc), status_code=422) from exc
+
         return AdapterMessageResult(
             external_id=external_id,
             status="sent",
@@ -505,6 +533,7 @@ def verify_webhook_signature(
         return False
     expected = (
         "sha256="
-        + hmac.new(app_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        + hmac.new(app_secret.encode("utf-8"),
+                   payload, hashlib.sha256).hexdigest()
     )
     return hmac.compare_digest(expected, signature_header)

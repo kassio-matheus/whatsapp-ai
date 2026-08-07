@@ -66,6 +66,9 @@ import {
   type WhatsAppCloudApiTemplate,
   type WhatsAppIntegration,
 } from "@/lib/api"
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll"
+
+import { useQueryState } from "nuqs"
 
 const statusStyle: Record<string, string> = {
   APPROVED:
@@ -162,7 +165,7 @@ function StatCard({
 }) {
   return (
     <Card
-      className="flex flex-row stagger-enter items-center gap-3 rounded-none p-3"
+      className="flex stagger-enter flex-row items-center gap-3 rounded-none p-3"
       style={{ animationDelay: `${delay}ms` }}
     >
       <div
@@ -194,10 +197,24 @@ export default function TemplatesPage() {
   )
   const [loading, setLoading] = React.useState(true)
   const [syncing, setSyncing] = React.useState(false)
+  const [templatesHasMore, setTemplatesHasMore] = React.useState(false)
+  const [templatesLoadingMore, setTemplatesLoadingMore] = React.useState(false)
+  const nextCursorRef = React.useRef<string | null>(null)
+  const templatesLoadingMoreRef = React.useRef(false)
+  const templatesHasMoreRef = React.useRef(false)
   const [error, setError] = React.useState<string | null>(null)
-  const [query, setQuery] = React.useState("")
-  const [status, setStatus] = React.useState("all")
-  const [category, setCategory] = React.useState("all")
+  const [query, setQuery] = useQueryState("q", {
+    defaultValue: "",
+    history: "replace",
+  })
+  const [status, setStatus] = useQueryState("status", {
+    defaultValue: "all",
+    history: "replace",
+  })
+  const [category, setCategory] = useQueryState("category", {
+    defaultValue: "all",
+    history: "replace",
+  })
   const [createOpen, setCreateOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<WhatsAppCloudApiTemplate | null>(
     null
@@ -238,29 +255,73 @@ export default function TemplatesPage() {
     }
   }, [params.companyId, token])
 
-  const loadTemplates = React.useCallback(async () => {
-    if (!token || !instanceId) {
-      setTemplates([])
-      return
-    }
-    setSyncing(true)
-    try {
-      const result = await api.listCloudApiTemplates(instanceId, token, {
-        limit: 250,
-      })
-      setTemplates(result.data)
-      setError(null)
-    } catch (err) {
-      setError(
-        err instanceof ApiClientError
-          ? err.message
-          : "Could not sync templates from Meta."
-      )
-    } finally {
-      setSyncing(false)
-      setLoading(false)
-    }
-  }, [instanceId, token])
+  const loadTemplates = React.useCallback(
+    async (reset = false) => {
+      if (!token || !instanceId) {
+        setTemplates([])
+        return
+      }
+      if (
+        !reset &&
+        (templatesLoadingMoreRef.current || !templatesHasMoreRef.current)
+      ) {
+        return
+      }
+      if (reset) {
+        setSyncing(true)
+        setError(null)
+      } else {
+        templatesLoadingMoreRef.current = true
+        setTemplatesLoadingMore(true)
+      }
+      try {
+        const result = await api.listCloudApiTemplates(instanceId, token, {
+          limit: 200,
+          after: reset ? undefined : (nextCursorRef.current ?? undefined),
+        })
+        if (reset) {
+          setTemplates(result.data)
+          nextCursorRef.current = result.next_cursor
+          templatesHasMoreRef.current = Boolean(result.next_cursor)
+          setTemplatesHasMore(templatesHasMoreRef.current)
+        } else {
+          nextCursorRef.current = result.next_cursor
+          templatesHasMoreRef.current = Boolean(result.next_cursor)
+          setTemplatesHasMore(templatesHasMoreRef.current)
+          setTemplates((previous) => {
+            const knownNames = new Set(previous.map((template) => template.id))
+            return [
+              ...previous,
+              ...result.data.filter((template) => !knownNames.has(template.id)),
+            ]
+          })
+        }
+        setError(null)
+      } catch (err) {
+        setError(
+          err instanceof ApiClientError
+            ? err.message
+            : "Could not sync templates from Meta."
+        )
+      } finally {
+        if (reset) {
+          setSyncing(false)
+          setLoading(false)
+        } else {
+          templatesLoadingMoreRef.current = false
+          setTemplatesLoadingMore(false)
+        }
+      }
+    },
+    [instanceId, token]
+  )
+
+  const templatesSentinelRef = useInfiniteScroll({
+    hasMore: templatesHasMore,
+    loading: templatesLoadingMore,
+    onLoadMore: () => void loadTemplates(false),
+    rootMargin: "300px",
+  })
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => void loadInstances(), 0)
@@ -268,7 +329,7 @@ export default function TemplatesPage() {
   }, [loadInstances])
 
   React.useEffect(() => {
-    const timer = window.setTimeout(() => void loadTemplates(), 0)
+    const timer = window.setTimeout(() => void loadTemplates(true), 0)
     return () => window.clearTimeout(timer)
   }, [loadTemplates])
 
@@ -283,7 +344,7 @@ export default function TemplatesPage() {
           (event.type.startsWith("template.") ||
             event.type === "instance.updated")
         ) {
-          void loadTemplates()
+          void loadTemplates(true)
         }
       },
     })
@@ -294,8 +355,7 @@ export default function TemplatesPage() {
     () =>
       templates.filter((template) => {
         const haystack =
-          `${template.name} ${template.language} ${template.category ?? ""} ${templateBody(template)}`
-            .toLowerCase()
+          `${template.name} ${template.language} ${template.category ?? ""} ${templateBody(template)}`.toLowerCase()
         const matchesQuery = haystack.includes(normalizedQuery)
         return (
           matchesQuery &&
@@ -320,7 +380,11 @@ export default function TemplatesPage() {
     }),
     [templates]
   )
-  const { approved: approvedCount, pending: pendingCount, rejected: rejectedCount } = counts
+  const {
+    approved: approvedCount,
+    pending: pendingCount,
+    rejected: rejectedCount,
+  } = counts
 
   async function handleDelete() {
     if (!token || !instanceId || !deleting) return
@@ -332,7 +396,7 @@ export default function TemplatesPage() {
         deleting.id ? { hsm_id: deleting.id } : {}
       )
       setDeleting(null)
-      await loadTemplates()
+      await loadTemplates(true)
     } catch (err) {
       setError(
         err instanceof ApiClientError
@@ -364,7 +428,7 @@ export default function TemplatesPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void loadTemplates()}
+            onClick={() => void loadTemplates(true)}
             disabled={!instanceId || syncing}
           >
             <RefreshCw className={cn(syncing && "animate-spin")} /> Sync
@@ -523,7 +587,7 @@ export default function TemplatesPage() {
                 const category = CATEGORY_META[template.category ?? ""]
                 const quality = qualityScoreOf(template)
                 const summary = templateComponentSummary(template)
-                
+
                 return (
                   <Card
                     key={template.id}
@@ -624,7 +688,8 @@ export default function TemplatesPage() {
                         </p>
                       </div>
 
-                      {template.rejected_reason && template.rejected_reason !== "NONE" ? (
+                      {template.rejected_reason &&
+                      template.rejected_reason !== "NONE" ? (
                         <p className="flex items-center gap-1.5 text-[11px] text-destructive">
                           <CircleAlert className="size-3 shrink-0" />
                           {template.rejected_reason}
@@ -660,6 +725,16 @@ export default function TemplatesPage() {
                   </Card>
                 )
               })}
+              <div className="col-span-full flex flex-col items-center gap-1 py-2">
+                {templatesLoadingMore ? (
+                  <LoaderCircle className="size-4 animate-spin text-muted-foreground" />
+                ) : null}
+                <div
+                  ref={templatesSentinelRef}
+                  aria-hidden="true"
+                  className="h-px w-full"
+                />
+              </div>
             </div>
           )}
         </>
@@ -677,7 +752,7 @@ export default function TemplatesPage() {
           instance={selectedInstance}
           token={token}
           template={editing}
-          onSaved={() => void loadTemplates()}
+          onSaved={() => void loadTemplates(true)}
         />
       ) : null}
 

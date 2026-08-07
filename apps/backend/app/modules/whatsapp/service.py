@@ -9,7 +9,7 @@ from typing import Any, cast
 
 from fastapi import HTTPException, UploadFile
 from pydantic import ValidationError
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -121,11 +121,13 @@ def upload_media(
 ) -> R2Object:
     """Upload a file to R2 and return its object metadata."""
     _ensure_r2()
+
     company = _ensure_company_access(
         session=session,
         company_id=company_id or (current_user.company_id or uuid.UUID(int=0)),
         current_user=current_user,
     )
+
     filename = _safe_filename(file.filename)
     content_type = file.content_type or "application/octet-stream"
     extension = _extension_for(content_type)
@@ -824,6 +826,7 @@ def list_contacts(
     company_id: uuid.UUID | None = None,
     name: str | None = None,
     phone_number: str | None = None,
+    search: str | None = None,
     is_active: bool | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -839,6 +842,13 @@ def list_contacts(
         phone_number=phone_number,
         is_active=is_active,
     )
+    if search:
+        filters.append(
+            or_(
+                WhatsAppContact.name.ilike(f"%{search}%"),
+                WhatsAppContact.phone_number.ilike(f"%{search}%"),
+            )
+        )
     if integration_id is not None:
         integration = _get_integration(
             session=session,
@@ -1005,6 +1015,7 @@ def list_conversations(
     contact_id: uuid.UUID | None = None,
     phone: str | None = None,
     title: str | None = None,
+    search: str | None = None,
     status: str | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -1047,7 +1058,21 @@ def list_conversations(
         matching_contact_ids = select(WhatsAppContact.id).where(
             WhatsAppContact.phone_number.ilike(f"%{phone}%")
         )
-        conditions.append(WhatsAppConversation.contact_id.in_(matching_contact_ids))
+        conditions.append(
+            WhatsAppConversation.contact_id.in_(matching_contact_ids))
+    if search is not None:
+        search_contact_ids = select(WhatsAppContact.id).where(
+            or_(
+                WhatsAppContact.phone_number.ilike(f"%{search}%"),
+                WhatsAppContact.name.ilike(f"%{search}%"),
+            )
+        )
+        conditions.append(
+            or_(
+                WhatsAppConversation.title.ilike(f"%{search}%"),
+                WhatsAppConversation.contact_id.in_(search_contact_ids),
+            )
+        )
     statement = (
         select(WhatsAppConversation)
         .where(*conditions)
@@ -1344,12 +1369,14 @@ def create_message(
         created_at=created_at,
         updated_at=created_at,
     )
+
     conversation.last_message_at = created_at
     conversation.updated_at = created_at
     session.add(message)
     session.add(conversation)
     _commit(session)
     session.refresh(message)
+
     whatsapp_event_broker.publish(
         company_id=message.company_id,
         event_type="message.created",
@@ -1357,6 +1384,7 @@ def create_message(
         conversation_id=message.conversation_id,
         message_id=message.id,
     )
+
     return message
 
 

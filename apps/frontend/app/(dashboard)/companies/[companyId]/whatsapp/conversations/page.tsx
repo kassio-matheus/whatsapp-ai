@@ -68,6 +68,12 @@ import {
 } from "@/lib/api"
 import { formatDateTime } from "@/lib/format"
 import { useDebouncedValue } from "@/lib/use-debounced-value"
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll"
+
+const CONVERSATIONS_PAGE_SIZE = 100
+const MESSAGES_PAGE_SIZE = 100
+
+import { useQueryState } from "nuqs"
 
 const STATUS_BADGE: Record<
   ConversationStatus,
@@ -143,7 +149,9 @@ export default function ConversationsPage() {
     []
   )
   const [contacts, setContacts] = React.useState<WhatsAppContact[]>([])
-  const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const [selectedId, setSelectedId] = useQueryState("conversation", {
+    history: "replace",
+  })
   const [messages, setMessages] = React.useState<WhatsAppMessage[]>([])
   const [messagesLoading, setMessagesLoading] = React.useState(false)
   const [templates, setTemplates] = React.useState<WhatsAppCloudApiTemplate[]>(
@@ -169,9 +177,29 @@ export default function ConversationsPage() {
     React.useState<WhatsAppConversation | null>(null)
   const [deletingMessage, setDeletingMessage] =
     React.useState<WhatsAppMessage | null>(null)
-  const [search, setSearch] = React.useState("")
-  const [statusFilter, setStatusFilter] = React.useState("all")
+  const [search, setSearch] = useQueryState("q", {
+    defaultValue: "",
+    history: "replace",
+  })
+  const [statusFilter, setStatusFilter] = useQueryState("status", {
+    defaultValue: "all",
+    history: "replace",
+  })
   const [searching, setSearching] = React.useState(false)
+
+  // Pagination state: the conversation sidebar and the message timeline both
+  // load in pages and append older items as the operator scrolls.
+  const [conversationsHasMore, setConversationsHasMore] = React.useState(true)
+  const [conversationsLoadingMore, setConversationsLoadingMore] =
+    React.useState(false)
+  const [messagesHasMore, setMessagesHasMore] = React.useState(false)
+  const [messagesLoadingMore, setMessagesLoadingMore] = React.useState(false)
+  const conversationsOffsetRef = React.useRef(0)
+  const messagesOffsetRef = React.useRef(0)
+  const conversationsLoadingMoreRef = React.useRef(false)
+  const messagesLoadingMoreRef = React.useRef(false)
+  const olderMessagesRef = React.useRef<WhatsAppMessage[]>([])
+  const olderMessagesConversationRef = React.useRef<string | null>(null)
 
   // Older auto-replies were stored twice (an internal "ai" draft plus the
   // delivered text). Skip the internal drafts so the reply appears exactly
@@ -270,15 +298,14 @@ export default function ConversationsPage() {
   // Keeps the active search/status filters applied on background refreshes
   // (SSE events and the polling fallback), so the list never "resets".
   const activeFiltersRef = React.useRef<{
-    phone?: string
-    title?: string
+    search?: string
     status?: string
   }>({})
 
   const loadConversations = React.useCallback(
     async (
       showLoader = false,
-      filters?: { phone?: string; title?: string; status?: string }
+      filters?: { search?: string; status?: string }
     ) => {
       if (!token) {
         return
@@ -296,9 +323,7 @@ export default function ConversationsPage() {
       }
       if (
         isUserDriven &&
-        (effectiveFilters.phone ||
-          effectiveFilters.title ||
-          effectiveFilters.status)
+        (effectiveFilters.search || effectiveFilters.status)
       ) {
         setSearching(true)
       }
@@ -307,10 +332,9 @@ export default function ConversationsPage() {
           await Promise.all([
             api.listConversations(token, {
               company_id: companyId,
-              phone: effectiveFilters.phone,
-              title: effectiveFilters.title,
+              search: effectiveFilters.search,
               status: effectiveFilters.status,
-              limit: 100,
+              limit: CONVERSATIONS_PAGE_SIZE,
             }),
             api.listInstances(token, { company_id: companyId }),
             api.listContacts(token, { company_id: companyId, limit: 200 }),
@@ -321,18 +345,20 @@ export default function ConversationsPage() {
           setContacts(contactsResult)
           setError(null)
           setSearching(false)
+          // A full reload resets pagination: the sidebar starts from the
+          // newest page and any older pages the user already scrolled get
+          // discarded (they will be re-fetched when scrolling resumes).
+          conversationsOffsetRef.current = conversationsResult.length
+          setConversationsHasMore(
+            conversationsResult.length >= CONVERSATIONS_PAGE_SIZE
+          )
+          setConversationsLoadingMore(false)
           setSelectedId((previous) => {
             if (
               previous &&
               conversationsResult.some((c) => c.id === previous)
             ) {
               return previous
-            }
-            const target = new URLSearchParams(window.location.search).get(
-              "conversation"
-            )
-            if (target && conversationsResult.some((c) => c.id === target)) {
-              return target
             }
             return conversationsResult[0]?.id ?? null
           })
@@ -355,8 +381,48 @@ export default function ConversationsPage() {
         }
       }
     },
-    [token, companyId]
+    [token, companyId, setSelectedId]
   )
+
+  const loadMoreConversations = React.useCallback(async () => {
+    if (!token) {
+      return
+    }
+    if (conversationsLoadingMoreRef.current) {
+      return
+    }
+    const seq = ++loadConversationsSeqRef.current
+    conversationsLoadingMoreRef.current = true
+    setConversationsLoadingMore(true)
+    const offset = conversationsOffsetRef.current
+    const filters = activeFiltersRef.current
+    try {
+      const result = await api.listConversations(token, {
+        company_id: companyId,
+        search: filters.search,
+        status: filters.status,
+        limit: CONVERSATIONS_PAGE_SIZE,
+        offset,
+      })
+      if (loadConversationsSeqRef.current === seq) {
+        conversationsOffsetRef.current = offset + result.length
+        setConversationsHasMore(result.length >= CONVERSATIONS_PAGE_SIZE)
+        setConversations((previous) => {
+          const knownIds = new Set(previous.map((item) => item.id))
+          return [
+            ...previous,
+            ...result.filter((item) => !knownIds.has(item.id)),
+          ]
+        })
+      }
+    } catch {
+      // A failed load-more leaves the already-loaded list untouched; the
+      // observer will simply retry the next time the edge is in view.
+    } finally {
+      conversationsLoadingMoreRef.current = false
+      setConversationsLoadingMore(false)
+    }
+  }, [token, companyId])
 
   const loadMessages = React.useCallback(
     async (conversationId: string | null, showLoader = false) => {
@@ -373,13 +439,35 @@ export default function ConversationsPage() {
         setMessagesLoading(true)
       }
       try {
-        const result = await api.listConversationMessages(companyId, conversationId, token)
+        const result = await api.listConversationMessages(
+          companyId,
+          conversationId,
+          token,
+          { limit: MESSAGES_PAGE_SIZE }
+        )
         // SSE events, the poll fallback and optimistic updates can fire several
         // overlapping reloads. Only the newest request may write the list, or a
         // stale response (fetched before the AI reply was committed) would
         // overwrite newer messages and make the latest message "disappear".
         if (loadMessagesSeqRef.current === requestSeq) {
-          setMessages(result)
+          if (olderMessagesConversationRef.current !== conversationId) {
+            olderMessagesConversationRef.current = conversationId
+            olderMessagesRef.current = []
+          }
+          // Rebuild the timeline without discarding pages the operator scrolled
+          // up to: older messages are kept (deduped against the newest page) so
+          // background refreshes never yank the scroll position back to bottom.
+          const newestIds = new Set(result.map((message) => message.id))
+          const keptOlder = olderMessagesRef.current.filter(
+            (message) => !newestIds.has(message.id)
+          )
+          olderMessagesRef.current = keptOlder
+          messagesOffsetRef.current = keptOlder.length + result.length
+          setMessagesHasMore(
+            result.length >= MESSAGES_PAGE_SIZE || keptOlder.length > 0
+          )
+          setMessagesLoadingMore(false)
+          setMessages([...keptOlder, ...result])
         }
       } finally {
         if (loaderSeq !== null && messagesLoaderSeqRef.current === loaderSeq) {
@@ -390,8 +478,84 @@ export default function ConversationsPage() {
     [token, companyId]
   )
 
+  const loadMoreMessages = React.useCallback(async () => {
+    if (!token || !selectedId) {
+      return
+    }
+    if (messagesLoadingMoreRef.current || !messagesHasMore) {
+      return
+    }
+    const requestSeq = ++loadMessagesSeqRef.current
+    messagesLoadingMoreRef.current = true
+    setMessagesLoadingMore(true)
+    const offset = messagesOffsetRef.current
+    try {
+      const result = await api.listConversationMessages(
+        companyId,
+        selectedId,
+        token,
+        { limit: MESSAGES_PAGE_SIZE, offset }
+      )
+      if (loadMessagesSeqRef.current === requestSeq) {
+        if (result.length === 0) {
+          setMessagesHasMore(false)
+          return
+        }
+        olderMessagesRef.current = [
+          ...olderMessagesRef.current,
+          ...result.filter(
+            (message) =>
+              !olderMessagesRef.current.some(
+                (existing) => existing.id === message.id
+              )
+          ),
+        ]
+        messagesOffsetRef.current = offset + result.length
+        setMessagesHasMore(result.length >= MESSAGES_PAGE_SIZE)
+        setMessages((previous) => {
+          const knownIds = new Set(previous.map((message) => message.id))
+          const older = olderMessagesRef.current.filter(
+            (message) => !knownIds.has(message.id)
+          )
+          return older.length > 0 ? [...older, ...previous] : previous
+        })
+      }
+    } catch {
+      // Keep the loaded timeline; the sentinel retries when scrolled again.
+    } finally {
+      messagesLoadingMoreRef.current = false
+      setMessagesLoadingMore(false)
+    }
+  }, [token, companyId, selectedId, messagesHasMore])
+
+  const conversationsSentinelRef = useInfiniteScroll<HTMLLIElement>({
+    hasMore: conversationsHasMore,
+    loading: conversationsLoadingMore,
+    onLoadMore: () => void loadMoreConversations(),
+    rootMargin: "240px",
+  })
+
+  const messagesOlderSentinelRef = useInfiniteScroll({
+    hasMore: messagesHasMore,
+    loading: messagesLoadingMore,
+    onLoadMore: () => void loadMoreMessages(),
+    rootMargin: "240px",
+  })
+
+  // The URL may already carry a search term or status (shared link or a page
+  // reload). Capture it on the first render so the initial load applies it
+  // instead of returning an unfiltered inbox on top of active query params.
+  const initialFiltersRef = React.useRef({
+    search: search.trim() || undefined,
+    status: statusFilter === "all" ? undefined : statusFilter,
+  })
+
   React.useEffect(() => {
-    void loadConversations(true)
+    const initial = initialFiltersRef.current
+    void loadConversations(true, {
+      search: initial.search,
+      status: initial.status,
+    })
   }, [loadConversations])
 
   const debouncedSearch = useDebouncedValue(search, 300)
@@ -404,8 +568,7 @@ export default function ConversationsPage() {
       return
     }
     void loadConversations(false, {
-      phone: trimmedSearch || undefined,
-      title: trimmedSearch || undefined,
+      search: trimmedSearch || undefined,
       status: statusFilter === "all" ? undefined : statusFilter,
     })
   }, [trimmedSearch, statusFilter, loadConversations])
@@ -696,7 +859,7 @@ export default function ConversationsPage() {
     if (!token) {
       throw new Error("You must be signed in to upload media.")
     }
-    const upload = await api.uploadWhatsAppMedia(file, token)
+    const upload = await api.uploadWhatsAppMedia(file, companyId, token)
     return upload.url
   }
 
@@ -906,6 +1069,16 @@ export default function ConversationsPage() {
                     </li>
                   )
                 })}
+                {conversationsLoadingMore ? (
+                  <li className="flex justify-center px-3 py-3 text-muted-foreground">
+                    <LoaderCircle className="size-4 animate-spin" />
+                  </li>
+                ) : null}
+                <li
+                  ref={conversationsSentinelRef}
+                  aria-hidden="true"
+                  className="h-px w-full"
+                />
               </ul>
             </ScrollArea>
           </Card>
@@ -995,6 +1168,16 @@ export default function ConversationsPage() {
                   className="min-h-0 flex-1"
                 >
                   <div className="flex flex-col gap-2 p-3">
+                    <div
+                      ref={messagesOlderSentinelRef}
+                      aria-hidden="true"
+                      className="h-px w-full shrink-0"
+                    />
+                    {messagesLoadingMore ? (
+                      <div className="flex justify-center py-2 text-muted-foreground">
+                        <LoaderCircle className="size-4 animate-spin" />
+                      </div>
+                    ) : null}
                     {messagesLoading ? (
                       <div className="flex justify-center py-8 text-muted-foreground">
                         <LoaderCircle className="size-4 animate-spin" />
@@ -1139,7 +1322,7 @@ function MessageBubble({
 
   if (isNote || isAi) {
     return (
-      <div className="group flex w-full justify-start">
+      <div className="group flex w-full justify-end">
         <div
           className={cn(
             "relative max-w-[80%] animate-pop rounded-none border px-3 py-2 text-xs",
@@ -1264,26 +1447,28 @@ function MessageBubble({
           </span>
           <MessageStatusIcon message={message} />
         </div>
-        <div className="absolute end-2 -top-2 hidden gap-0.5 group-hover:flex">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="h-6 w-6 shadow-sm"
-            onClick={onEdit}
-          >
-            <Pencil />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="h-6 w-6 text-destructive shadow-sm"
-            onClick={onDelete}
-          >
-            <Trash2 />
-          </Button>
-        </div>
+        {message.direction == "outbound" && (
+          <div className="absolute end-2 -top-2 hidden gap-0.5 group-hover:flex">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="h-6 w-6 shadow-sm"
+              onClick={onEdit}
+            >
+              <Pencil />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="h-6 w-6 text-destructive shadow-sm"
+              onClick={onDelete}
+            >
+              <Trash2 />
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -197,6 +197,27 @@ export type ConversationAISettings = {
   system_prompt: string | null
 }
 
+export type AIDocumentStatus = "pending" | "processing" | "extracted" | "failed"
+
+export type AIDocument = {
+  id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+  extraction_status: AIDocumentStatus
+  created_at: string
+}
+
+export type SessionAttachment = AIDocument & {
+  session_id: string
+}
+
+export type CompanyKnowledge = {
+  company_id: string
+  company_info: string | null
+  documents: AIDocument[]
+}
+
 export type LLMProvider = "deepseek" | "openai" | "gemini" | "groq"
 
 export type ReasoningLevel = "minimal" | "low" | "medium" | "high"
@@ -689,6 +710,22 @@ export const api = {
     return `${API_BASE}/ai/sessions/${sessionId}/files/${fileId}`
   },
 
+  listSessionFiles(sessionId: string, token: string) {
+    return request<SessionAttachment[]>(
+      `/ai/sessions/${sessionId}/files`,
+      {},
+      token
+    )
+  },
+
+  deleteSessionFile(sessionId: string, fileId: string, token: string) {
+    return request<{ message: string }>(
+      `/ai/sessions/${sessionId}/files/${fileId}`,
+      { method: "DELETE" },
+      token
+    )
+  },
+
   // --- WhatsApp ---
   createCloudApiInstance(
     data: {
@@ -826,6 +863,7 @@ export const api = {
       company_id?: string
       name?: string
       phone_number?: string
+      search?: string
       is_active?: boolean
       limit?: number
       offset?: number
@@ -892,6 +930,7 @@ export const api = {
       contact_id?: string
       phone?: string
       title?: string
+      search?: string
       status?: string
       limit?: number
       offset?: number
@@ -934,10 +973,23 @@ export const api = {
   listConversationMessages(
     companyId: string,
     conversationId: string,
-    token: string
+    token: string,
+    opts: { limit?: number; offset?: number } = {}
   ) {
     return request<WhatsAppMessage[]>(
-      `/whatsapp/conversations/${companyId}/${conversationId}/messages`,
+      `/whatsapp/conversations/${companyId}/${conversationId}/messages${buildQuery(opts)}`,
+      {},
+      token
+    )
+  },
+
+  listSessionMessages(
+    sessionId: string,
+    token: string,
+    opts: { limit?: number; offset?: number } = {}
+  ) {
+    return request<ChatMessage[]>(
+      `/ai/sessions/${sessionId}/messages${buildQuery(opts)}`,
       {},
       token
     )
@@ -1088,11 +1140,14 @@ export const api = {
     )
   },
 
-  uploadWhatsAppMedia(file: File, token: string) {
+  uploadWhatsAppMedia(file: File, companyId: string, token: string) {
     const form = new FormData()
+
     form.append("file", file)
+    form.append("company_id", companyId)
+
     return request<WhatsAppMediaUpload>(
-      "/whatsapp/media/upload",
+      `/whatsapp/media/upload`,
       { method: "POST", body: form },
       token
     )
@@ -1128,6 +1183,44 @@ export const api = {
     return request<McpToolsPage>(
       `/whatsapp/companies/${companyId}/ai/mcp-tools`,
       {},
+      token
+    )
+  },
+
+  getCompanyKnowledge(companyId: string, token: string) {
+    return request<CompanyKnowledge>(
+      `/whatsapp/companies/${companyId}/ai/knowledge`,
+      {},
+      token
+    )
+  },
+
+  updateCompanyKnowledge(
+    companyId: string,
+    data: { company_info?: string | null },
+    token: string
+  ) {
+    return request<CompanyKnowledge>(
+      `/whatsapp/companies/${companyId}/ai/knowledge`,
+      { method: "PUT", body: JSON.stringify(data) },
+      token
+    )
+  },
+
+  uploadCompanyDocument(companyId: string, file: File, token: string) {
+    const form = new FormData()
+    form.append("file", file)
+    return request<AIDocument>(
+      `/whatsapp/companies/${companyId}/ai/documents`,
+      { method: "POST", body: form },
+      token
+    )
+  },
+
+  deleteCompanyDocument(companyId: string, documentId: string, token: string) {
+    return request<{ message: string }>(
+      `/whatsapp/companies/${companyId}/ai/documents/${documentId}`,
+      { method: "DELETE" },
       token
     )
   },

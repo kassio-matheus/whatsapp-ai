@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { Bell, BellRing, Check } from "lucide-react"
+import { Bell, BellRing, Check, LoaderCircle } from "lucide-react"
 
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
@@ -22,6 +22,7 @@ import { cn } from "@workspace/ui/lib/utils"
 import { useApp } from "@/components/app-provider"
 import { api, type NotificationItem } from "@/lib/api"
 import { formatRelative } from "@/lib/format"
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll"
 
 const POLL_INTERVAL_MS = 30_000
 const PAGE_SIZE = 20
@@ -33,6 +34,9 @@ function NotificationBell() {
   const [open, setOpen] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
   const [markingAll, setMarkingAll] = React.useState(false)
+  const [hasMore, setHasMore] = React.useState(true)
+  const [loadingMore, setLoadingMore] = React.useState(false)
+  const loadingMoreRef = React.useRef(false)
 
   const companyId = currentCompanyId ?? undefined
 
@@ -72,6 +76,7 @@ function NotificationBell() {
         limit: PAGE_SIZE,
       })
       setItems(response.items)
+      setHasMore(response.items.length >= PAGE_SIZE)
       setUnread(response.unread_count)
     } catch {
       // ...
@@ -79,6 +84,43 @@ function NotificationBell() {
       setLoading(false)
     }
   }, [token, companyId])
+
+  const loadMoreItems = React.useCallback(async () => {
+    if (!token || !companyId || loadingMoreRef.current || !hasMore) {
+return
+    }
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    const offset = items.length
+    try {
+      const response = await api.listNotifications(token, {
+        companyId,
+        limit: PAGE_SIZE,
+        offset,
+      })
+      setHasMore(response.items.length >= PAGE_SIZE)
+      setItems((previous) => {
+        const knownIds = new Set(previous.map((item) => item.id))
+        return [
+          ...previous,
+          ...response.items.filter((item) => !knownIds.has(item.id)),
+        ]
+      })
+      setUnread(response.unread_count)
+    } catch {
+      // ...
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+    }
+  }, [token, companyId, hasMore, items.length])
+
+  const sentinelRef = useInfiniteScroll({
+    hasMore,
+    loading: loadingMore,
+    onLoadMore: () => void loadMoreItems(),
+    rootMargin: "240px",
+  })
 
   const handleOpenChange = React.useCallback(
     (nextOpen: boolean) => {
@@ -179,19 +221,33 @@ function NotificationBell() {
                   </span>
                 </div>
               ) : (
-                items.map((item) => (
-                  <NotificationRow
-                    key={item.id}
-                    item={item}
-                    companyId={companyId}
-                    token={token}
-                    onMarkedRead={() => {
-                      setUnread((previous) =>
-                        previous > 0 && !item.is_read ? previous - 1 : previous
-                      )
-                    }}
+                <React.Fragment>
+                  {items.map((item) => (
+                    <NotificationRow
+                      key={item.id}
+                      item={item}
+                      companyId={companyId}
+                      token={token}
+                      onMarkedRead={() => {
+                        setUnread((previous) =>
+                          previous > 0 && !item.is_read
+                            ? previous - 1
+                            : previous
+                        )
+                      }}
+                    />
+                  ))}
+                  {loadingMore ? (
+                    <div className="flex justify-center py-3 text-muted-foreground">
+                      <LoaderCircle className="size-4 animate-spin" />
+                    </div>
+                  ) : null}
+                  <div
+                    ref={sentinelRef}
+                    aria-hidden="true"
+                    className="h-px w-full"
                   />
-                ))
+                </React.Fragment>
               )}
             </ScrollArea>
           </DropdownMenuGroup>

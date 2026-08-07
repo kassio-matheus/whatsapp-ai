@@ -32,6 +32,8 @@ import {
 
 import type { WhatsAppCloudApiTemplate, WhatsAppMessage } from "@/lib/api"
 
+import { AudioRecorder } from "@/components/whatsapp/audio-recorder"
+
 export type ComposerMessageData = {
   message_type: string
   content?: string
@@ -210,9 +212,10 @@ function MessageComposer({
   const [isPending, setIsPending] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [uploading, setUploading] = React.useState(false)
+  const [recorderActive, setRecorderActive] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const composerRef = React.useRef<HTMLTextAreaElement>(null)
-  const composing = disabled || isPending || aiPending || uploading
+  const composing = disabled || aiPending || uploading
 
   function insertCommand(prefix: string) {
     setMessageType("text")
@@ -270,6 +273,24 @@ function MessageComposer({
       )
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function handleAudioSend(data: ComposerMessageData) {
+    if (!onUpload) {
+      setError("Audio recording is unavailable for this conversation.")
+      return
+    }
+    setIsPending(true)
+    setError(null)
+    try {
+      await onSend(data)
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not send the audio message."
+      )
+    } finally {
+      setIsPending(false)
     }
   }
 
@@ -373,6 +394,16 @@ function MessageComposer({
       }
 
       setIsPending(true)
+      setAdvancedJson("")
+      setContent("")
+      setMediaUrl("")
+      setTemplateId("")
+      setTemplateValues({})
+      setLatitude("")
+      setLongitude("")
+      setLocationName("")
+      setLocationAddress("")
+
       setError(null)
       await onSend({
         message_type: messageType,
@@ -380,15 +411,6 @@ function MessageComposer({
         media_url: trimmedMediaUrl || undefined,
         metadata,
       })
-      setContent("")
-      setMediaUrl("")
-      setAdvancedJson("")
-      setTemplateId("")
-      setTemplateValues({})
-      setLatitude("")
-      setLongitude("")
-      setLocationName("")
-      setLocationAddress("")
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send message.")
     } finally {
@@ -470,15 +492,25 @@ function MessageComposer({
       {isMediaType ? (
         <div className="mb-2 flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
-            <Label htmlFor="message-media-url">
-              Media ID or public URL
-            </Label>
+            <Label htmlFor="message-media-url">Media ID or public URL</Label>
             {onUpload ? (
               <>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*,video/*,audio/*,application/pdf,text/plain,application/octet-stream"
+                  accept={
+                    selectedType?.value == "IMAGE"
+                      ? "image/*,"
+                      : selectedType?.value == "VIDEO"
+                        ? "video/*"
+                        : selectedType?.value == "audio"
+                          ? "audio/*"
+                          : selectedType?.value == "document"
+                            ? "application/pdf, text/plain, application/octet-stream"
+                            : selectedType?.value == "sticker"
+                              ? "image/gif"
+                              : "image/*,video/*,audio/*,application/pdf, text/plain,application/octet-stream"
+                  }
                   className="hidden"
                   disabled={composing}
                   onChange={(event) => void handleFileChange(event)}
@@ -580,10 +612,7 @@ function MessageComposer({
                 setError(null)
               }}
               disabled={
-                disabled ||
-                isPending ||
-                templatesLoading ||
-                approvedTemplates.length === 0
+                disabled || templatesLoading || approvedTemplates.length === 0
               }
             >
               <SelectTrigger className="w-full bg-background">
@@ -689,7 +718,7 @@ function MessageComposer({
             }))}
             value={reactionTarget || defaultReactionTarget || undefined}
             onValueChange={(value) => setReactionTarget(String(value))}
-            disabled={disabled || isPending || reactionMessages.length === 0}
+            disabled={disabled || reactionMessages.length === 0}
           >
             <SelectTrigger>
               <SelectValue placeholder="Message to react to" />
@@ -717,33 +746,44 @@ function MessageComposer({
       ) : null}
 
       <div className="flex items-end gap-2">
-        <textarea
-          ref={composerRef}
-          value={content}
-          onChange={(event) => setContent(event.target.value)}
-          placeholder={
-            messageType === "text"
-              ? "Type a message… or use /ai or /note"
-              : "Caption or optional message text…"
-          }
-          rows={1}
-          disabled={composing}
-          className="min-h-9 flex-1 resize-none rounded-none border border-input bg-transparent px-2.5 py-2 text-xs focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault()
-              event.currentTarget.form?.requestSubmit()
-            }
-          }}
+        <AudioRecorder
+          disabled={disabled || !onUpload}
+          onUpload={onUpload}
+          onSend={(data) => handleAudioSend(data)}
+          onActiveChange={setRecorderActive}
+          onError={setError}
         />
-        <Button
-          type="submit"
-          size="icon"
-          disabled={composing}
-          aria-label="Send message"
-        >
-          {isPending ? <LoaderCircle className="animate-spin" /> : <Send />}
-        </Button>
+        {!recorderActive ? (
+          <>
+            <textarea
+              ref={composerRef}
+              value={content}
+              onChange={(event) => setContent(event.target.value)}
+              placeholder={
+                messageType === "text"
+                  ? "Type a message… or use /ai or /note"
+                  : "Caption or optional message text…"
+              }
+              rows={1}
+              disabled={composing}
+              className="min-h-9 flex-1 resize-none rounded-none border border-input bg-transparent px-2.5 py-2 text-xs focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+            />
+            <Button
+              type="submit"
+              size="icon"
+              disabled={composing}
+              aria-label="Send message"
+            >
+              {isPending ? <LoaderCircle className="animate-spin" /> : <Send />}
+            </Button>
+          </>
+        ) : null}
       </div>
       {aiPending ? (
         <p className="flex items-center gap-1.5 pt-2 text-[10px] text-primary">

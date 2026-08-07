@@ -3,7 +3,7 @@ import json
 import queue
 import uuid
 
-from fastapi import APIRouter, File, Header, Query, Request, UploadFile
+from fastapi import APIRouter, File, Header, Query, Form, Request, UploadFile
 from sqlmodel import Session
 from starlette.responses import PlainTextResponse, Response, StreamingResponse
 
@@ -387,15 +387,17 @@ async def receive_meta_webhook(
 def upload_media(
     session: SessionDep,
     current_user: CurrentUser,
-    company_id: uuid.UUID | None = Query(default=None),  # noqa: B008
+    company_id: uuid.UUID | None = Form(default=None),
     file: UploadFile = File(...),  # noqa: B008
 ) -> WhatsAppMediaUploadResponse:
+
     obj = service.upload_media(
         session=session,
         current_user=current_user,
         file=file,
         company_id=company_id,
     )
+
     return WhatsAppMediaUploadResponse(
         key=obj.key,
         url=obj.url,
@@ -645,6 +647,11 @@ def list_contacts(
         description="Filter contacts by phone number (partial match).",
         json_schema_extra={"examples": ["+5575"]},
     ),
+    search: str | None = Query(
+        default=None,
+        description="Free-text search across name and phone number (case-insensitive partial match).",
+        json_schema_extra={"examples": ["Kássio"]},
+    ),
     is_active: bool | None = Query(
         default=None, description="Filter by active status."),
     limit: int = Query(
@@ -664,6 +671,7 @@ def list_contacts(
             company_id=company_id,
             name=name,
             phone_number=phone_number,
+            search=search,
             is_active=is_active,
             limit=limit,
             offset=offset,
@@ -775,6 +783,11 @@ def list_conversations(
         description="Filter conversations by title (case-insensitive partial match).",
         json_schema_extra={"examples": ["Suporte"]},
     ),
+    search: str | None = Query(
+        default=None,
+        description="Free-text search across the conversation title and the contact name/phone (case-insensitive partial match).",
+        json_schema_extra={"examples": ["Suporte"]},
+    ),
     status: str | None = Query(
         default=None,
         description="Filter conversations by status (`open`, `pending` or `closed`).",
@@ -799,6 +812,7 @@ def list_conversations(
             contact_id=contact_id,
             phone=phone,
             title=title,
+            search=search,
             status=status,
             limit=limit,
             offset=offset,
@@ -968,13 +982,15 @@ def create_message(
     session: SessionDep,
     current_user: CurrentUser
 ) -> WhatsAppMessageResponse:
-    return _message_response(session,
-                             service.create_message(
-                                 session=session,
-                                 current_user=current_user,
-                                 data=data,
-                             )
-                             )
+    message = service.create_message(
+        session=session,
+        current_user=current_user,
+        data=data,
+    )
+
+    tz = resolve_company_timezone(
+        session=session, company_id=message.company_id)
+    return _message_response(tz, message)
 
 
 @router.get(

@@ -288,6 +288,14 @@ def _generate_and_send(
         parts.append(company_settings.system_prompt)
     if conversation_setting is not None and conversation_setting.system_prompt:
         parts.append(conversation_setting.system_prompt)
+
+    from app.modules.ai.documents import company_knowledge_block
+
+    knowledge = company_knowledge_block(
+        session=session, company_id=company.id)
+    if knowledge:
+        parts.append(knowledge)
+
     system_prompt = "\n\n".join(parts)
 
     context = _recent_context(

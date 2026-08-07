@@ -19,6 +19,8 @@ import {
   UserRound,
   Wrench,
   EllipsisVertical,
+  MessageSquare,
+  MessageSquareText,
 } from "lucide-react"
 
 import { Avatar, AvatarFallback } from "@workspace/ui/components/avatar"
@@ -109,12 +111,12 @@ const WHATSAPP_SUB_NAV: NavItem[] = [
 
 const AI_SUB_NAV: NavItem[] = [
   {
-    title: "AI Chat",
-    icon: Bot,
+    title: "Chat",
+    icon: MessageSquareText,
     buildHref: () => "/ai/chat",
   },
   {
-    title: "AI Settings",
+    title: "Settings",
     icon: Wrench,
     buildHref: () => "/ai/settings",
   },
@@ -136,7 +138,7 @@ const BASE_NAV: NavItem[] = [
   },
   {
     title: "AI",
-    icon: Sparkles,
+    icon: Bot,
     buildHref: () => "/ai",
     children: AI_SUB_NAV,
   },
@@ -478,6 +480,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>
+
       <SidebarInset>
         <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger className="-ms-1 md:hidden" />
@@ -532,9 +535,11 @@ function AppShell({ children }: { children: React.ReactNode }) {
             {user.is_super_admin ? "Super admin" : "Member"}
           </Badge>
         </header>
+
         <div key={pathname} className="min-h-0 flex-1 animate-fade-up">
           {children}
         </div>
+        
       </SidebarInset>
     </SidebarProvider>
   )

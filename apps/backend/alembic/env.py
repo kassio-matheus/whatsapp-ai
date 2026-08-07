@@ -7,7 +7,13 @@ from alembic import context
 from app.core.config import settings
 
 # Import all models so they are registered in SQLModel.metadata
-from app.modules.ai.models import ChatFile, ChatSession, Message  # noqa: F401
+from app.modules.ai.models import (  # noqa: F401
+    AICompanyDocument,
+    AICompanyProfile,
+    ChatFile,
+    ChatSession,
+    Message,
+)
 from app.modules.ai_whatsapp.models import (  # noqa: F401
     ConversationAISetting,
     WhatsAppAISettings,

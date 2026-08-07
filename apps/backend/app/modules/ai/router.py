@@ -15,6 +15,7 @@ from app.modules.ai.models import (
     CompanyLLMSettingsUpdate,
     ContextSummaryResponse,
     MessageResponse,
+    SessionFileResponse,
     SystemPromptResponse,
     SystemPromptUpdate,
 )
@@ -154,6 +155,39 @@ def get_context(
             for m in messages
         ],
     )
+
+
+@router.get(
+    "/sessions/{session_id}/messages",
+    response_model=list[MessageResponse],
+    summary="List session messages",
+    description=(
+        "Return a page of the session message history, oldest first within the "
+        "page. Used for infinite-scroll chat: offset 0 is the newest page and "
+        "increasing offsets walk backwards toward the oldest messages."
+    ),
+)
+def list_session_messages(
+    session_id: uuid.UUID,
+    current_user: CurrentUser,
+    limit: int = Query(default=50, ge=1, le=200, description="Maximum number of messages."),
+    offset: int = Query(default=0, ge=0, description="Number of newest messages to skip."),
+) -> list[MessageResponse]:
+    messages = service.list_session_messages(
+        session_id=session_id,
+        user_id=current_user.id,
+        limit=limit,
+        offset=offset,
+    )
+    return [
+        MessageResponse(
+            id=m.id,
+            role=m.role,
+            content=m.content,
+            created_at=m.created_at,
+        )
+        for m in messages
+    ]
 
 
 @router.get(
@@ -304,6 +338,55 @@ def download_file(
         media_type=mime_type or "application/octet-stream",
         headers=headers,
     )
+
+
+@router.get(
+    "/sessions/{session_id}/files",
+    response_model=list[SessionFileResponse],
+    summary="List session files",
+    description=(
+        "Return the files attached to a session. Files whose text was "
+        "extracted are injected into the session's system prompt."
+    ),
+)
+def get_session_files(
+    session_id: uuid.UUID,
+    current_user: CurrentUser,
+) -> list[SessionFileResponse]:
+    files = service.get_session_files(
+        session_id=session_id, user_id=current_user.id)
+    return [
+        SessionFileResponse(
+            id=f.id,
+            session_id=f.session_id,
+            filename=f.filename,
+            mime_type=f.mime_type,
+            size_bytes=f.size_bytes,
+            extraction_status=f.extraction_status,
+            created_at=f.created_at,
+        )
+        for f in files
+    ]
+
+
+@router.delete(
+    "/sessions/{session_id}/files/{file_id}",
+    status_code=200,
+    response_model=Message,
+    summary="Delete a session file",
+    description="Remove a file attached to a session and its stored blob.",
+)
+def delete_session_file(
+    session_id: uuid.UUID,
+    file_id: uuid.UUID,
+    current_user: CurrentUser,
+) -> Message:
+    service.delete_session_file(
+        session_id=session_id,
+        user_id=current_user.id,
+        file_id=file_id,
+    )
+    return Message(message="File deleted")
 
 
 @router.get(

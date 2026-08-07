@@ -51,9 +51,14 @@ def to_company_timezone(
     UTC offset. ``None`` values pass through untouched.
     """
     if value is None:
-        return None
+        def _now() -> datetime.datetime:
+            return datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
+
+        value = _now()
+
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
+    
     return value.astimezone(company_zone(tz_name))
 
 

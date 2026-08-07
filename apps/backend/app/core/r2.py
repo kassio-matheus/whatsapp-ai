@@ -23,6 +23,7 @@ SERVICE = "s3"
 REGION = "auto"
 _ALGORITHM = "AWS4-HMAC-SHA256"
 _SHA256_EMPTY = hashlib.sha256(b"").hexdigest()
+_UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD"
 
 
 class R2Error(RuntimeError):
@@ -62,6 +63,7 @@ def _hash(data: bytes) -> str:
 def _canonical_uri(key: str) -> str:
     # Keys use the safe charset; '/' separates folders, everything else encoded.
     return quote(key, safe="/")
+
 
 def _canonical_query(params: dict[str, str]) -> str:
     return urlencode(sorted(params.items()))
@@ -184,6 +186,7 @@ class R2Storage:
                 "Authorization": authorization,
                 "x-amz-content-sha256": body_hash,
                 "x-amz-date": amz_date,
+                "User-Agent": "Mozilla/5.0 (compatible; R2StorageClient/1.0)",
             },
         )
         if content_type:
@@ -276,7 +279,7 @@ class R2Storage:
             canonical_query=canonical_query,
             amz_date=amz_date,
             date_stamp=date_stamp,
-            payload_hash=_SHA256_EMPTY,
+            payload_hash=_UNSIGNED_PAYLOAD,   # <- era _SHA256_EMPTY
             headers=headers,
             signed_headers=signed_headers,
         )

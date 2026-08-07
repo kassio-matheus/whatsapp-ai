@@ -72,7 +72,11 @@ class Settings(BaseSettings):
     # windows and degrade when flooded with irrelevant history.
     AI_CONTEXT_BUDGET_TOKENS: int = 10000
     AI_PROMPT_BUDGET_TOKENS: int = 1200
-    AI_SYSTEM_BUDGET_TOKENS: int = 1500
+    # Roomier than default because the assistant also carries the injected
+    # knowledge block (company information + uploaded documents) inside the
+    # system prompt. The knowledge itself is capped separately by
+    # ``app.modules.ai.documents``.
+    AI_SYSTEM_BUDGET_TOKENS: int = 3000
     # How many recent turns are kept from the conversation history at most.
     # Kept well above the "last 20 messages" requirement so the model always
     # reads a full recent window; the token budget is what trims old turns.
@@ -111,8 +115,6 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices(
             "R2_SECRET_ACCESS_KEY",
-            "SECRET_ACCESS_KEY",
-            "SECRET_ACESS_KEY",
         ),
     )
     R2_API_ENDPOINT: str = Field(

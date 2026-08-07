@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import Column, Text
 from sqlmodel import Field as SQLField
 from sqlmodel import Relationship, SQLModel
 
@@ -24,6 +25,20 @@ class ReasoningLevel(str, enum.Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+class AIDocumentStatus(str, enum.Enum):
+    """Processing state of a knowledge document uploaded for the AI.
+
+    ``pending`` means it was stored but the document-reading AI has not
+    produced text yet; ``extracted`` means its content is available and gets
+    injected into the assistant's system prompt.
+    """
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    EXTRACTED = "extracted"
+    FAILED = "failed"
 
 
 class CompanyLLMSettings(SQLModel, table=True):
@@ -296,6 +311,49 @@ class AIGlobalSettingsUpdate(BaseModel):
     )
 
 
+class AICompanyProfile(SQLModel, table=True):
+    """Company information injected into the AI assistant's system prompt.
+
+    A single row per company with free-form text describing the business
+    (products, tone, policies...). It feeds every AI surface that acts for the
+    company: the WhatsApp assistant and the AI Chat of its members.
+    """
+
+    __tablename__ = "ai_company_profiles"
+
+    company_id: uuid.UUID = SQLField(foreign_key="companies.id", primary_key=True)
+    company_info: str | None = SQLField(default=None, max_length=16000)
+    updated_at: datetime = SQLField(default_factory=datetime.now, nullable=True)
+
+
+class AICompanyDocument(SQLModel, table=True):
+    """A document the company uploaded as knowledge for its AI assistant.
+
+    Besides storing the blob, the document is read by the document-reading AI
+    (see ``app.modules.ai.file_reader``) and its extracted text is injected
+    into the system prompt, so the assistant can answer from the company's own
+    files without tool calls.
+    """
+
+    __tablename__ = "ai_company_documents"
+
+    id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
+    company_id: uuid.UUID = SQLField(
+        foreign_key="companies.id", nullable=False, index=True)
+    uploader_id: uuid.UUID = SQLField(
+        foreign_key="users.id", nullable=False, index=True)
+    filename: str = SQLField(max_length=512)
+    filepath: str = SQLField(max_length=1024)
+    mime_type: str = SQLField(max_length=128)
+    size_bytes: int = SQLField(default=0)
+    extraction_status: str = SQLField(
+        default=AIDocumentStatus.PENDING.value, max_length=16, index=True)
+    extracted_text: str | None = SQLField(
+        default=None, sa_column=Column(Text, nullable=True))
+    created_at: datetime = SQLField(default_factory=datetime.now)
+    updated_at: datetime = SQLField(default_factory=datetime.now, nullable=True)
+
+
 class ChatResponseStructure(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -358,6 +416,10 @@ class ChatFile(SQLModel, table=True):
     filepath: str = SQLField(max_length=1024)
     mime_type: str = SQLField(max_length=128)
     size_bytes: int = SQLField(default=0)
+    extraction_status: str = SQLField(
+        default=AIDocumentStatus.PENDING.value, max_length=16, index=True)
+    extracted_text: str | None = SQLField(
+        default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = SQLField(default_factory=datetime.now)
 
     session: ChatSession = Relationship(back_populates="files")
@@ -459,3 +521,46 @@ class ChatResponse(BaseModel):
     response: str = Field(description="Generated assistant reply.")
     session_id: uuid.UUID = Field(
         description="Session that produced the reply.")
+
+
+class AIDocumentResponse(BaseModel):
+    """Metadata of a knowledge document (session or company)."""
+
+    id: uuid.UUID = Field(description="Document identifier.")
+    filename: str = Field(description="Original file name.")
+    mime_type: str = Field(description="MIME type of the uploaded file.")
+    size_bytes: int = Field(description="File size in bytes.")
+    extraction_status: AIDocumentStatus = Field(
+        description=(
+            "State of the document-reading AI: `pending`, `processing`, "
+            "`extracted` or `failed`."
+        )
+    )
+    created_at: datetime = Field(description="Upload timestamp.")
+
+
+class SessionFileResponse(AIDocumentResponse):
+    """A file attached to a chat session."""
+
+    session_id: uuid.UUID = Field(description="Session the file belongs to.")
+
+
+class CompanyKnowledgeResponse(BaseModel):
+    """Company information plus the documents feeding its AI assistant."""
+
+    company_id: uuid.UUID = Field(description="Owning company identifier.")
+    company_info: str | None = Field(
+        description="Free-form company information injected into the system prompt."
+    )
+    documents: list[AIDocumentResponse] = Field(
+        description="Documents uploaded by the company as AI knowledge.")
+
+
+class CompanyKnowledgeUpdate(BaseModel):
+    """Payload to update the company information in the system prompt."""
+
+    company_info: str | None = Field(
+        default=None,
+        max_length=16000,
+        description="Company information to inject. Pass `null` or empty to clear it.",
+    )

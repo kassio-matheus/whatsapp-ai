@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.db import engine
 from app.core.r2 import R2Error, r2
+from app.modules.ai import documents
 from app.modules.ai.gateway import generate_for_user
 from app.modules.ai.llm.common import friendly_provider_error
 from app.modules.ai.models import ChatFile, ChatSession, Message
@@ -19,12 +20,6 @@ from app.modules.auth.models import User
 
 SUMMARY_THRESHOLD = 60
 MAX_ACTIVE_SESSIONS = 100
-_ALLOWED_UPLOADS = {
-    "application/pdf": {".pdf"},
-    "image/jpeg": {".jpg", ".jpeg"},
-    "image/png": {".png"},
-    "text/plain": {".txt"},
-}
 
 
 def _expires_at() -> datetime.datetime:
@@ -153,7 +148,7 @@ def delete_session(*, session_id: uuid.UUID, user_id: uuid.UUID) -> None:
             except R2Error:
                 continue
 
-    file_dir = os.path.join(settings.UPLOAD_DIR, str(session_id))
+    file_dir = os.path.join(settings.UPLOAD_DIR, "ai/session", str(session_id))
     if os.path.isdir(file_dir):
         shutil.rmtree(file_dir)
 
@@ -193,6 +188,27 @@ def get_session_messages(*, session_id: uuid.UUID, user_id: uuid.UUID) -> list[M
             .order_by(asc(Message.created_at))
         )
         return list(session.exec(stmt).all())
+
+
+def list_session_messages(
+    *,
+    session_id: uuid.UUID,
+    user_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[Message]:
+    db = get_session(session_id=session_id, user_id=user_id)
+    with Session(engine) as session:
+        stmt = (
+            select(Message)
+            .where(Message.session_id == db.id)
+            .order_by(desc(Message.created_at))
+            .offset(offset)
+            .limit(limit)
+        )
+        messages = list(session.exec(stmt).all())
+        messages.reverse()
+        return messages
 
 
 def chat(
@@ -253,13 +269,29 @@ def chat(
 
         user = session.get(User, user_id)
 
+        knowledge_parts: list[str] = []
+        if chat_session.system_prompt:
+            knowledge_parts.append(chat_session.system_prompt)
+        if user is not None and user.company_id is not None:
+            company_block = documents.company_knowledge_block(
+                session=session, company_id=user.company_id
+            )
+            if company_block:
+                knowledge_parts.append(company_block)
+        session_block = documents.session_knowledge_block(
+            session=session, session_id=chat_session.id
+        )
+        if session_block:
+            knowledge_parts.append(session_block)
+        system_prompt = "\n\n".join(knowledge_parts) or None
+
         try:
             result = generate_for_user(
                 session=session,
                 user=user,
                 prompt=prompt,
                 context=context,
-                system_prompt=chat_session.system_prompt,
+                system_prompt=system_prompt,
                 actor_user_id=actor_user_id or str(user_id),
             )
         except HTTPException:
@@ -293,77 +325,11 @@ def chat(
 def upload_file(
     *, session_id: uuid.UUID, user_id: uuid.UUID, file: UploadFile
 ) -> ChatFile:
-    db = get_session(session_id=session_id, user_id=user_id)
-
-    filename = os.path.basename(file.filename or "")
-    mime_type = file.content_type or ""
-    extension = Path(filename).suffix.lower()
-    if not filename or mime_type not in _ALLOWED_UPLOADS:
-        raise HTTPException(status_code=415, detail="Unsupported file type")
-    if extension not in _ALLOWED_UPLOADS[mime_type]:
-        raise HTTPException(status_code=415, detail="File extension does not match type")
-
-    file_id = uuid.uuid4()
-
-    size = 0
-    chunk_buffer = bytearray()
-    try:
-        while chunk := file.file.read(64 * 1024):
-            size += len(chunk)
-            if size > settings.MAX_UPLOAD_BYTES:
-                raise HTTPException(status_code=413, detail="File is too large")
-            chunk_buffer.extend(chunk)
-    finally:
-        file.file.close()
-
-    if r2.configured:
-        key = _file_key(
-            user_id=user_id,
-            session_id=db.id,
-            file_id=file_id,
-            extension=extension,
-        )
-        try:
-            r2.put_object(
-                key=key,
-                data=bytes(chunk_buffer),
-                content_type=mime_type,
-            )
-        except R2Error as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Could not store the file: {exc}",
-            ) from exc
-        stored_ref = key
-    else:
-        base_dir = Path(settings.UPLOAD_DIR).resolve()
-        file_dir = base_dir / str(session_id)
-        file_dir.mkdir(parents=True, exist_ok=True)
-        saved_name = f"{file_id}{extension}"
-        filepath = file_dir / saved_name
-        filepath.write_bytes(bytes(chunk_buffer))
-        stored_ref = str(filepath)
-
-    with Session(engine) as session:
-        chat_file = ChatFile(
-            id=file_id,
-            session_id=db.id,
-            user_id=user_id,
-            filename=filename,
-            filepath=stored_ref,
-            mime_type=mime_type,
-            size_bytes=size,
-        )
-        session.add(chat_file)
-        session.commit()
-        session.refresh(chat_file)
-        return chat_file
-
-
-def _file_key(
-    *, user_id: uuid.UUID, session_id: uuid.UUID, file_id: uuid.UUID, extension: str
-) -> str:
-    return f"ai/{user_id}/{session_id}/{file_id}{extension}"
+    return documents.upload_session_file(
+        session_id=session_id,
+        user_id=user_id,
+        file=file,
+    )
 
 
 def download_file(
@@ -393,7 +359,12 @@ def download_file(
 
 
 def get_session_files(*, session_id: uuid.UUID, user_id: uuid.UUID) -> list[ChatFile]:
-    db = get_session(session_id=session_id, user_id=user_id)
-    with Session(engine) as session:
-        stmt = select(ChatFile).where(ChatFile.session_id == db.id)
-        return list(session.exec(stmt).all())
+    get_session(session_id=session_id, user_id=user_id)
+    return documents.list_session_files(session_id=session_id)
+
+
+def delete_session_file(
+    *, session_id: uuid.UUID, user_id: uuid.UUID, file_id: uuid.UUID
+) -> None:
+    get_session(session_id=session_id, user_id=user_id)
+    documents.delete_session_file(session_id=session_id, file_id=file_id)

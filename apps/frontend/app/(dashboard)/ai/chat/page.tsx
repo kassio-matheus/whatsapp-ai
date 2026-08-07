@@ -3,6 +3,8 @@
 import * as React from "react"
 import {
   Bot,
+  CircleQuestionMark,
+  FileText,
   LoaderCircle,
   MoreHorizontal,
   Pencil,
@@ -10,6 +12,7 @@ import {
   Send,
   Sparkles,
   Trash2,
+  Upload,
   User,
 } from "lucide-react"
 
@@ -45,11 +48,19 @@ import { compactPrompt } from "@/lib/token-saver"
 import {
   api,
   ApiClientError,
+  type AIDocumentStatus,
   type ChatMessage,
   type ChatSession,
   type ContextSummary,
+  type SessionAttachment,
 } from "@/lib/api"
 import { formatDateTime, formatRelative } from "@/lib/format"
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll"
+
+import { useQueryState } from "nuqs"
+
+const SESSION_PAGE_SIZE = 30
+const CHAT_MESSAGE_PAGE_SIZE = 50
 
 export default function AIPage() {
   const { token, companies, currentCompanyId } = useApp()
@@ -60,7 +71,9 @@ export default function AIPage() {
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [sessions, setSessions] = React.useState<ChatSession[]>([])
-  const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const [selectedId, setSelectedId] = useQueryState("session", {
+    history: "replace",
+  })
   const [messages, setMessages] = React.useState<ChatMessage[]>([])
   const [messagesLoading, setMessagesLoading] = React.useState(false)
   const [prompt, setPrompt] = React.useState("")
@@ -68,11 +81,29 @@ export default function AIPage() {
   const [sessionDialog, setSessionDialog] = React.useState(false)
   const [systemPromptTarget, setSystemPromptTarget] =
     React.useState<ChatSession | null>(null)
-  const [contextTarget, setContextTarget] = React.useState<ContextSummary | null>(null)
+  const [contextTarget, setContextTarget] =
+    React.useState<ContextSummary | null>(null)
   const [contextLoading, setContextLoading] = React.useState(false)
   const [deleting, setDeleting] = React.useState<ChatSession | null>(null)
-  const [sessionSearch, setSessionSearch] = React.useState("")
+  const [sessionSearch, setSessionSearch] = useQueryState("q", {
+    defaultValue: "",
+    history: "replace",
+  })
+  const [filesOpen, setFilesOpen] = React.useState(false)
+  const [files, setFiles] = React.useState<SessionAttachment[]>([])
+  const [filesLoading, setFilesLoading] = React.useState(false)
+  const [uploadingFile, setUploadingFile] = React.useState(false)
+  const [deletingFile, setDeletingFile] = React.useState<string | null>(null)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
   const messagesEndRef = React.useRef<HTMLDivElement>(null)
+  const [sessionsHasMore, setSessionsHasMore] = React.useState(true)
+  const [sessionsLoadingMore, setSessionsLoadingMore] = React.useState(false)
+  const [messagesHasMore, setMessagesHasMore] = React.useState(false)
+  const [messagesLoadingMore, setMessagesLoadingMore] = React.useState(false)
+  const sessionsOffsetRef = React.useRef(0)
+  const messagesOffsetRef = React.useRef(0)
+  const sessionsLoadingMoreRef = React.useRef(false)
+  const messagesLoadingMoreRef = React.useRef(false)
 
   const selected = sessions.find((session) => session.id === selectedId) ?? null
   const sessionQuery = sessionSearch.trim().toLowerCase()
@@ -97,9 +128,14 @@ export default function AIPage() {
         setIsLoading(true)
       }
       try {
-        const result = await api.listChatSessions(token)
+        const result = await api.listChatSessions(token, {
+          limit: SESSION_PAGE_SIZE,
+        })
         setSessions(result)
         setError(null)
+        sessionsOffsetRef.current = result.length
+        setSessionsHasMore(result.length >= SESSION_PAGE_SIZE)
+        setSessionsLoadingMore(false)
         setSelectedId((previous) => {
           if (previous && result.some((session) => session.id === previous)) {
             return previous
@@ -116,8 +152,37 @@ export default function AIPage() {
         setIsLoading(false)
       }
     },
-    [token],
+    [token, setSelectedId]
   )
+
+  const loadMoreSessions = React.useCallback(async () => {
+    if (!token || sessionsLoadingMoreRef.current || !sessionsHasMore) {
+      return
+    }
+    sessionsLoadingMoreRef.current = true
+    setSessionsLoadingMore(true)
+    const offset = sessionsOffsetRef.current
+    try {
+      const result = await api.listChatSessions(token, {
+        limit: SESSION_PAGE_SIZE,
+        offset,
+      })
+      sessionsOffsetRef.current = offset + result.length
+      setSessionsHasMore(result.length >= SESSION_PAGE_SIZE)
+      setSessions((previous) => {
+        const knownIds = new Set(previous.map((session) => session.id))
+        return [
+          ...previous,
+          ...result.filter((session) => !knownIds.has(session.id)),
+        ]
+      })
+    } catch {
+      // Keep the loaded list; the sentinel retries when scrolled again.
+    } finally {
+      sessionsLoadingMoreRef.current = false
+      setSessionsLoadingMore(false)
+    }
+  }, [token, sessionsHasMore])
 
   const loadMessages = React.useCallback(
     async (sessionId: string | null) => {
@@ -127,14 +192,71 @@ export default function AIPage() {
       }
       setMessagesLoading(true)
       try {
-        const context = await api.getChatContext(sessionId, token)
-        setMessages(context.messages)
+        const result = await api.listSessionMessages(sessionId, token, {
+          limit: CHAT_MESSAGE_PAGE_SIZE,
+        })
+        messagesOffsetRef.current = result.length
+        setMessagesHasMore(result.length >= CHAT_MESSAGE_PAGE_SIZE)
+        setMessagesLoadingMore(false)
+        setMessages(result)
       } finally {
         setMessagesLoading(false)
       }
     },
-    [token],
+    [token]
   )
+
+  const loadMoreMessages = React.useCallback(async () => {
+    if (
+      !token ||
+      !selectedId ||
+      messagesLoadingMoreRef.current ||
+      !messagesHasMore
+    ) {
+      return
+    }
+    messagesLoadingMoreRef.current = true
+    setMessagesLoadingMore(true)
+    const offset = messagesOffsetRef.current
+    try {
+      const result = await api.listSessionMessages(selectedId, token, {
+        limit: CHAT_MESSAGE_PAGE_SIZE,
+        offset,
+      })
+      if (result.length === 0) {
+        setMessagesHasMore(false)
+        return
+      }
+      messagesOffsetRef.current = offset + result.length
+      setMessagesHasMore(result.length >= CHAT_MESSAGE_PAGE_SIZE)
+      setMessages((previous) => {
+        const knownIds = new Set(previous.map((message) => message.id))
+        return [
+          ...result.filter((message) => !knownIds.has(message.id)),
+          ...previous,
+        ]
+      })
+    } catch {
+      // Keep the loaded timeline; the sentinel retries when scrolled.
+    } finally {
+      messagesLoadingMoreRef.current = false
+      setMessagesLoadingMore(false)
+    }
+  }, [token, selectedId, messagesHasMore])
+
+  const sessionsSentinelRef = useInfiniteScroll<HTMLLIElement>({
+    hasMore: sessionsHasMore,
+    loading: sessionsLoadingMore,
+    onLoadMore: () => void loadMoreSessions(),
+    rootMargin: "200px",
+  })
+
+  const messagesOlderSentinelRef = useInfiniteScroll({
+    hasMore: messagesHasMore,
+    loading: messagesLoadingMore,
+    onLoadMore: () => void loadMoreMessages(),
+    rootMargin: "240px",
+  })
 
   React.useEffect(() => {
     void loadSessions(true)
@@ -144,9 +266,60 @@ export default function AIPage() {
     void loadMessages(selectedId)
   }, [selectedId, loadMessages])
 
+  const loadFiles = React.useCallback(
+    async (sessionId: string | null) => {
+      if (!token || !sessionId) {
+        setFiles([])
+        return
+      }
+      setFilesLoading(true)
+      try {
+        setFiles(await api.listSessionFiles(sessionId, token))
+      } finally {
+        setFilesLoading(false)
+      }
+    },
+    [token]
+  )
+
+  React.useEffect(() => {
+    void loadFiles(selectedId)
+  }, [selectedId, loadFiles])
+
   React.useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ block: "end" })
   }, [messages, messagesLoading, sending])
+
+  async function handleUploadFile(file: File) {
+    if (!token || !selectedId) {
+      return
+    }
+    setUploadingFile(true)
+    try {
+      await api.uploadSessionFile(selectedId, file, token)
+      await loadFiles(selectedId)
+    } finally {
+      setUploadingFile(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
+    }
+  }
+
+  async function handleDeleteFile(fileId: string) {
+    if (!token || !selectedId) {
+      return
+    }
+    setDeletingFile(fileId)
+    try {
+      await api.deleteSessionFile(selectedId, fileId, token)
+      setFiles((previous) =>
+        previous.filter((file) => file.id !== fileId)
+      )
+    } finally {
+      setDeletingFile(null)
+    }
+  }
 
   async function handleSend(event: React.FormEvent) {
     event.preventDefault()
@@ -191,7 +364,7 @@ export default function AIPage() {
     }
     await api.deleteChatSession(deleting.id, token)
     setSessions((previous) =>
-      previous.filter((session) => session.id !== deleting.id),
+      previous.filter((session) => session.id !== deleting.id)
     )
     if (selectedId === deleting.id) {
       setSelectedId(null)
@@ -272,7 +445,7 @@ export default function AIPage() {
           />
         </Card>
       ) : (
-        <div className="grid min-h-0 max-h-[80vh] flex-1 gap-3 lg:grid-cols-[300px_1fr]">
+        <div className="grid max-h-[80vh] min-h-0 flex-1 gap-3 lg:grid-cols-[300px_1fr]">
           <Card className="flex min-h-0 flex-col p-0">
             <div className="border-b p-2">
               <SearchInput
@@ -298,7 +471,7 @@ export default function AIPage() {
                       <div
                         className={cn(
                           "flex items-center gap-1 border-b px-2 py-2 transition-colors hover:bg-accent",
-                          isActive && "bg-accent",
+                          isActive && "bg-accent"
                         )}
                       >
                         <button
@@ -332,7 +505,7 @@ export default function AIPage() {
                             <DropdownMenuItem
                               onClick={() => void openContext(session.id)}
                             >
-                              <Sparkles />
+                              <CircleQuestionMark />
                               View context
                             </DropdownMenuItem>
                             <DropdownMenuItem
@@ -348,6 +521,16 @@ export default function AIPage() {
                     </li>
                   )
                 })}
+                {sessionsLoadingMore ? (
+                  <li className="flex justify-center px-3 py-3 text-muted-foreground">
+                    <LoaderCircle className="size-4 animate-spin" />
+                  </li>
+                ) : null}
+                <li
+                  ref={sessionsSentinelRef}
+                  aria-hidden="true"
+                  className="h-px w-full"
+                />
               </ul>
             </ScrollArea>
           </Card>
@@ -382,15 +565,33 @@ export default function AIPage() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
+                      title="Session documents"
+                      onClick={() => setFilesOpen(true)}
+                    >
+                      <FileText />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
                       onClick={() => void openContext(selected.id)}
                     >
-                      <Sparkles />
+                      <CircleQuestionMark />
                     </Button>
                   </div>
                 </div>
 
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex flex-col gap-3 p-4">
+                    {messagesLoadingMore ? (
+                      <div className="flex justify-center py-2 text-muted-foreground">
+                        <LoaderCircle className="size-4 animate-spin" />
+                      </div>
+                    ) : null}
+                    <div
+                      ref={messagesOlderSentinelRef}
+                      aria-hidden="true"
+                      className="h-px w-full shrink-0"
+                    />
                     {messagesLoading ? (
                       <div className="flex justify-center py-10 text-muted-foreground">
                         <LoaderCircle className="size-4 animate-spin" />
@@ -402,7 +603,7 @@ export default function AIPage() {
                       </p>
                     ) : (
                       messages.map((message) => (
-<ChatBubble
+                        <ChatBubble
                           key={message.id}
                           message={message}
                           timezone={timezone}
@@ -476,14 +677,14 @@ export default function AIPage() {
           const result = await api.updateSystemPrompt(
             sessionId,
             systemPrompt,
-            token,
+            token
           )
           setSessions((previous) =>
             previous.map((session) =>
               session.id === sessionId
                 ? { ...session, system_prompt: result.system_prompt }
-                : session,
-            ),
+                : session
+            )
           )
         }}
         onClear={async (sessionId) => {
@@ -495,8 +696,8 @@ export default function AIPage() {
             previous.map((session) =>
               session.id === sessionId
                 ? { ...session, system_prompt: result.system_prompt }
-                : session,
-            ),
+                : session
+            )
           )
         }}
       />
@@ -516,7 +717,8 @@ export default function AIPage() {
               The summarized context used by the assistant for this session.
             </SheetDescription>
           </SheetHeader>
-          <div className="flex flex-col gap-4 p-4">
+
+          <div className="flex flex-col gap-4 overflow-y-auto p-4">
             {contextLoading ? (
               <div className="flex justify-center py-10 text-muted-foreground">
                 <LoaderCircle className="size-4 animate-spin" />
@@ -525,12 +727,12 @@ export default function AIPage() {
               <>
                 <div className="flex flex-col gap-2">
                   <h3 className="text-xs font-medium">Summary</h3>
-                  <p className="whitespace-pre-wrap rounded-none border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  <p className="rounded-none border bg-muted/40 px-3 py-2 text-xs whitespace-pre-wrap text-muted-foreground">
                     {contextTarget.context_summary ??
                       "No summary available yet."}
                   </p>
                 </div>
-                <div className="flex flex-col gap-2">
+                {/* <div className="flex flex-col gap-2">
                   <h3 className="text-xs font-medium">
                     Recent messages ({contextTarget.messages.length})
                   </h3>
@@ -543,9 +745,101 @@ export default function AIPage() {
                       />
                     ))}
                   </div>
-                </div>
+
+                  <div ref={messagesEndRef} />
+                </div> */}
               </>
             ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={filesOpen} onOpenChange={setFilesOpen}>
+        <SheetContent side="right">
+          <SheetHeader>
+            <SheetTitle>Session documents</SheetTitle>
+            <SheetDescription>
+              Attach files to this session. Their text is read and injected
+              into the assistant&apos;s system prompt, so the AI answers from
+              them.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="flex flex-col gap-4 overflow-y-auto p-4">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-fit"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadingFile}
+            >
+              {uploadingFile ? (
+                <LoaderCircle className="size-3 animate-spin" />
+              ) : (
+                <Upload className="size-3" />
+              )}
+              Upload document
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.pdf,.jpg,.jpeg,.png"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                if (file) {
+                  void handleUploadFile(file)
+                }
+              }}
+            />
+
+            {filesLoading ? (
+              <div className="flex justify-center py-8 text-muted-foreground">
+                <LoaderCircle className="size-4 animate-spin" />
+              </div>
+            ) : files.length === 0 ? (
+              <p className="py-8 text-center text-xs text-muted-foreground">
+                No files attached to this session yet.
+              </p>
+            ) : (
+              <ul className="flex flex-col divide-y">
+                {files.map((file) => (
+                  <li
+                    key={file.id}
+                    className="flex items-center gap-3 py-2"
+                  >
+                    <FileText className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate text-xs">
+                      {file.filename}
+                    </span>
+                    <ExtractionBadge status={file.extraction_status} />
+                    <a
+                      href={api.sessionFileUrl(selectedId ?? "", file.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] text-muted-foreground underline-offset-2 hover:underline"
+                    >
+                      open
+                    </a>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Delete ${file.filename}`}
+                      onClick={() => void handleDeleteFile(file.id)}
+                      disabled={deletingFile === file.id}
+                    >
+                      {deletingFile === file.id ? (
+                        <LoaderCircle className="size-3 animate-spin" />
+                      ) : (
+                        <Trash2 className="size-3" />
+                      )}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </SheetContent>
       </Sheet>
@@ -574,9 +868,9 @@ function TypingIndicator() {
         <Bot />
       </span>
       <div className="flex items-center gap-1 rounded-none border border-border bg-background px-3 py-3">
-        <span className="animate-typing size-1.5 rounded-full bg-muted-foreground" />
-        <span className="animate-typing size-1.5 rounded-full bg-muted-foreground [animation-delay:0.15s]" />
-        <span className="animate-typing size-1.5 rounded-full bg-muted-foreground [animation-delay:0.3s]" />
+        <span className="size-1.5 animate-typing rounded-full bg-muted-foreground" />
+        <span className="size-1.5 animate-typing rounded-full bg-muted-foreground [animation-delay:0.15s]" />
+        <span className="size-1.5 animate-typing rounded-full bg-muted-foreground [animation-delay:0.3s]" />
       </div>
     </div>
   )
@@ -595,22 +889,22 @@ function ChatBubble({
     <div
       className={cn(
         "flex w-full gap-2",
-        isUser ? "justify-end" : "justify-start",
+        isUser ? "justify-end" : "justify-start"
       )}
     >
       {!isUser ? (
-        <span className="animate-pop mt-1 flex size-6 shrink-0 items-center justify-center rounded-full border bg-muted/40 [&_svg]:size-3">
+        <span className="mt-1 flex size-6 shrink-0 animate-pop items-center justify-center rounded-full border bg-muted/40 [&_svg]:size-3">
           {isSystem ? <Sparkles /> : <Bot />}
         </span>
       ) : null}
       <div
         className={cn(
-          "animate-pop max-w-[75%] rounded-none border px-3 py-2 text-xs",
+          "max-w-[75%] animate-pop rounded-none border px-3 py-2 text-xs",
           isUser
             ? "border-primary/20 bg-primary/10"
             : isSystem
               ? "border-border bg-muted/30"
-              : "border-border bg-background",
+              : "border-border bg-background"
         )}
       >
         <Markdown content={message.content} />
@@ -624,5 +918,26 @@ function ChatBubble({
         </span>
       ) : null}
     </div>
+  )
+}
+
+const EXTRACTION_LABELS: Record<AIDocumentStatus, string> = {
+  pending: "Waiting to be read",
+  processing: "Reading…",
+  extracted: "Read",
+  failed: "Failed",
+}
+
+function ExtractionBadge({ status }: { status: AIDocumentStatus }) {
+  const colored =
+    status === "extracted"
+      ? "bg-green-50 text-green-700"
+      : status === "failed"
+        ? "bg-red-50 text-red-700"
+        : "bg-muted text-muted-foreground"
+  return (
+    <Badge variant="outline" className={cn("text-[10px]", colored)}>
+      {EXTRACTION_LABELS[status]}
+    </Badge>
   )
 }

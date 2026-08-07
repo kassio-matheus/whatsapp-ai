@@ -7,6 +7,7 @@ import {
   Bot,
   LoaderCircle,
   Mail,
+  MessageSquare,
   MessageSquareText,
   Phone,
   Plus,
@@ -16,7 +17,12 @@ import {
 
 import { Badge } from "@workspace/ui/components/badge"
 import { Button } from "@workspace/ui/components/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@workspace/ui/components/card"
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@workspace/ui/components/card"
 import {
   Table,
   TableBody,
@@ -40,6 +46,8 @@ import {
   type WhatsAppIntegration,
 } from "@/lib/api"
 import { formatDate } from "@/lib/format"
+import { WhatsAppIcon } from "@/components/ui/whatsapp-icon"
+import { useQueryState } from "nuqs"
 
 export default function CompanyDashboardPage() {
   const params = useParams<{ companyId: string }>()
@@ -51,11 +59,18 @@ export default function CompanyDashboardPage() {
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [members, setMembers] = React.useState<Member[]>([])
-  const [integrations, setIntegrations] = React.useState<WhatsAppIntegration[]>([])
+  const [integrations, setIntegrations] = React.useState<WhatsAppIntegration[]>(
+    []
+  )
   const [conversationCount, setConversationCount] = React.useState(0)
   const [memberDialog, setMemberDialog] = React.useState(false)
-  const [deletingMember, setDeletingMember] = React.useState<Member | null>(null)
-  const [memberSearch, setMemberSearch] = React.useState("")
+  const [deletingMember, setDeletingMember] = React.useState<Member | null>(
+    null
+  )
+  const [memberSearch, setMemberSearch] = useQueryState("q", {
+    defaultValue: "",
+    history: "replace",
+  })
 
   React.useEffect(() => {
     if (!token) {
@@ -82,10 +97,15 @@ export default function CompanyDashboardPage() {
         }
       } catch (err) {
         if (!cancelled) {
-          if (err instanceof ApiClientError && (err.status === 403 || err.status === 404)) {
+          if (
+            err instanceof ApiClientError &&
+            (err.status === 403 || err.status === 404)
+          ) {
             setError(err.message)
           } else {
-            setError(err instanceof Error ? err.message : "Failed to load data.")
+            setError(
+              err instanceof Error ? err.message : "Failed to load data."
+            )
           }
         }
       } finally {
@@ -131,7 +151,10 @@ export default function CompanyDashboardPage() {
             title="Something went wrong"
             description={error}
             action={
-              <Button variant="outline" onClick={() => window.location.reload()}>
+              <Button
+                variant="outline"
+                onClick={() => window.location.reload()}
+              >
                 Retry
               </Button>
             }
@@ -147,7 +170,7 @@ export default function CompanyDashboardPage() {
     }
     await api.deleteMember(companyId, deletingMember.id, token)
     setMembers((previous) =>
-      previous.filter((member) => member.id !== deletingMember.id),
+      previous.filter((member) => member.id !== deletingMember.id)
     )
     setDeletingMember(null)
   }
@@ -163,11 +186,11 @@ export default function CompanyDashboardPage() {
           nativeButton={false}
           render={<Link href={`/companies/${companyId}/whatsapp`} />}
         >
-          <MessageSquareText />
+          <WhatsAppIcon />
           WhatsApp
         </Button>
         <Button nativeButton={false} render={<Link href="/ai" />}>
-          <Bot />
+          <MessageSquareText />
           AI Chat
         </Button>
       </PageHeader>
@@ -196,7 +219,7 @@ export default function CompanyDashboardPage() {
         />
       </div>
 
-      <Card className="p-0">
+      <Card className="p-1 pt-6 pb-6">
         <CardHeader>
           <div className="flex items-center justify-between gap-2">
             <CardTitle>Members</CardTitle>
@@ -258,9 +281,7 @@ export default function CompanyDashboardPage() {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={member.is_active ? "secondary" : "outline"}
-                    >
+                    <Badge variant={member.is_active ? "secondary" : "outline"}>
                       {member.is_active
                         ? member.is_verified
                           ? "Active"
@@ -303,7 +324,7 @@ export default function CompanyDashboardPage() {
             const member = await api.createMember(
               companyId,
               { email, password },
-              token,
+              token
             )
             setMembers((previous) => [...previous, member])
           }}

@@ -45,17 +45,31 @@ import {
 } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 import { useDebouncedValue } from "@/lib/use-debounced-value"
+import { useInfiniteScroll } from "@/lib/use-infinite-scroll"
+
+import { useQueryState } from "nuqs"
+
+const CONTACTS_PAGE_SIZE = 200
 
 export default function ContactsPage() {
   const params = useParams<{ companyId: string }>()
+
   const { token, companies } = useApp()
   const companyId = params.companyId
   const timezone = React.useMemo(
     () =>
-      companies.find((company) => company.id === companyId)?.timezone ??
-      "UTC",
+      companies.find((company) => company.id === companyId)?.timezone ?? "UTC",
     [companies, companyId]
   )
+
+  const [search, setSearch] = useQueryState("q", {
+    defaultValue: "",
+    history: "replace",
+  })
+  const [statusFilter, setStatusFilter] = useQueryState("status", {
+    defaultValue: "all",
+    history: "replace",
+  })
 
   const [isLoading, setIsLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -63,9 +77,14 @@ export default function ContactsPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<WhatsAppContact | null>(null)
   const [deleting, setDeleting] = React.useState<WhatsAppContact | null>(null)
-  const [search, setSearch] = React.useState("")
-  const [statusFilter, setStatusFilter] = React.useState("all")
   const [searching, setSearching] = React.useState(false)
+  const [contactsHasMore, setContactsHasMore] = React.useState(true)
+  const [contactsLoadingMore, setContactsLoadingMore] = React.useState(false)
+  const contactsOffsetRef = React.useRef(0)
+  const contactsLoadingMoreRef = React.useRef(false)
+  const activeContactsFiltersRef = React.useRef<{
+    search?: string
+  }>({})
 
   // Guards which async response is allowed to write state (protects against
   // an older, slower request overwriting a newer one).
@@ -86,12 +105,13 @@ export default function ContactsPage() {
   // ever told the UI to stop loading. Splitting the counters, and (below)
   // skipping the search effect's very first run, removes both the race and
   // the redundant duplicate request it was racing against.
+
   const loaderSeqRef = React.useRef(0)
 
   const load = React.useCallback(
     async (
       showLoader = false,
-      filters?: { name?: string; phone_number?: string }
+      filters?: { search?: string }
     ) => {
       if (!token) {
         return
@@ -101,20 +121,26 @@ export default function ContactsPage() {
       if (showLoader) {
         setIsLoading(true)
       }
-      if (filters?.name || filters?.phone_number) {
+      if (filters?.search) {
         setSearching(true)
       }
       try {
         const result = await api.listContacts(token, {
           company_id: companyId,
-          name: filters?.name,
-          phone_number: filters?.phone_number,
-          limit: 200,
+          search: filters?.search,
+          limit: CONTACTS_PAGE_SIZE,
         })
         if (loadSeqRef.current === seq) {
           setContacts(result)
           setError(null)
           setSearching(false)
+          if (filters) {
+            activeContactsFiltersRef.current = filters
+          }
+          // Every full reload restarts pagination from the newest page.
+          contactsOffsetRef.current = result.length
+          setContactsHasMore(result.length >= CONTACTS_PAGE_SIZE)
+          setContactsLoadingMore(false)
         }
       } catch (err) {
         if (loadSeqRef.current === seq) {
@@ -134,8 +160,60 @@ export default function ContactsPage() {
     [token, companyId]
   )
 
+  const loadMoreContacts = React.useCallback(async () => {
+    if (!token || contactsLoadingMoreRef.current || !contactsHasMore) {
+      return
+    }
+    const seq = ++loadSeqRef.current
+    contactsLoadingMoreRef.current = true
+    setContactsLoadingMore(true)
+    const offset = contactsOffsetRef.current
+    try {
+      const result = await api.listContacts(token, {
+        company_id: companyId,
+        search: activeContactsFiltersRef.current?.search,
+        limit: CONTACTS_PAGE_SIZE,
+        offset,
+      })
+      if (loadSeqRef.current === seq) {
+        contactsOffsetRef.current = offset + result.length
+        setContactsHasMore(result.length >= CONTACTS_PAGE_SIZE)
+        setContacts((previous) => {
+          const knownIds = new Set(previous.map((contact) => contact.id))
+          return [
+            ...previous,
+            ...result.filter((contact) => !knownIds.has(contact.id)),
+          ]
+        })
+      }
+    } catch {
+      // Keep the loaded rows; the sentinel retries when the table edge is
+      // scrolled back into view.
+    } finally {
+      contactsLoadingMoreRef.current = false
+      setContactsLoadingMore(false)
+    }
+  }, [token, companyId, contactsHasMore])
+
+  const contactsSentinelRef = useInfiniteScroll({
+    hasMore: contactsHasMore,
+    loading: contactsLoadingMore,
+    onLoadMore: () => void loadMoreContacts(),
+    rootMargin: "260px",
+  })
+
+  // The URL may already carry a search term (shared link or a page reload).
+  // Capture it on the first render so the initial load applies it instead of
+  // returning an unfiltered list on top of an active query param.
+  const initialSearchRef = React.useRef(search.trim())
+
   React.useEffect(() => {
-    void load(true)
+    const initial = initialSearchRef.current
+    if (initial) {
+      void load(true, { search: initial })
+    } else {
+      void load(true)
+    }
   }, [load])
 
   const debouncedSearch = useDebouncedValue(search, 300)
@@ -151,10 +229,7 @@ export default function ContactsPage() {
       return
     }
     if (trimmedSearch) {
-      void load(false, {
-        name: trimmedSearch,
-        phone_number: trimmedSearch,
-      })
+      void load(false, { search: trimmedSearch })
     } else {
       void load(false)
     }
@@ -319,8 +394,8 @@ export default function ContactsPage() {
                   <TableCell>
                     <span className="flex items-center gap-2 font-medium">
                       <span className="flex size-6 items-center justify-center rounded-full bg-muted text-[10px]">
-                        {(contact.name || contact.phone_number)[0]?.toUpperCase() ??
-                          "?"}
+                        {(contact.name ||
+                          contact.phone_number)[0]?.toUpperCase() ?? "?"}
                       </span>
                       {contact.name ?? "Unnamed"}
                     </span>
@@ -372,6 +447,20 @@ export default function ContactsPage() {
                   </TableCell>
                 </TableRow>
               ))}
+              <TableRow className="border-0 hover:bg-transparent">
+                <TableCell colSpan={5} className="p-0">
+                  {contactsLoadingMore ? (
+                    <div className="flex justify-center py-3 text-muted-foreground">
+                      <LoaderCircle className="size-4 animate-spin" />
+                    </div>
+                  ) : null}
+                  <div
+                    ref={contactsSentinelRef}
+                    aria-hidden="true"
+                    className="h-px w-full"
+                  />
+                </TableCell>
+              </TableRow>
             </TableBody>
           </Table>
         </Card>

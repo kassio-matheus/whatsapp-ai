@@ -39,6 +39,8 @@ import { SearchInput } from "@/components/ui/search-input"
 import { api } from "@/lib/api"
 import { formatDate } from "@/lib/format"
 
+import { useQueryState } from "nuqs"
+
 export default function CompaniesPage() {
   const { token, user, companies, refreshCompanies, switchCompany } = useApp()
   const router = useRouter()
@@ -47,7 +49,10 @@ export default function CompaniesPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [renaming, setRenaming] = React.useState<string | null>(null)
   const [deleting, setDeleting] = React.useState<string | null>(null)
-  const [search, setSearch] = React.useState("")
+  const [search, setSearch] = useQueryState("q", {
+    defaultValue: "",
+    history: "replace",
+  })
 
   React.useEffect(() => {
     if (!token || !user?.is_super_admin) {
