@@ -2237,6 +2237,7 @@ def process_meta_webhook(
 ) -> dict[str, int | bool]:
     try:
         payload = json.loads(raw_payload.decode("utf-8"))
+        print(payload)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise HTTPException(
             status_code=400, detail="Invalid Meta webhook JSON"

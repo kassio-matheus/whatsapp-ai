@@ -484,8 +484,7 @@ class MetaCloudApiClient:
                 f"/{self.credentials.phone_number_id}/messages",
                 payload=payload,
             )
-            print(payload)
-            print(response)
+            
             messages = response.get("messages", [])
 
             external_id = messages[0].get("id") if messages else None
