@@ -135,7 +135,7 @@ async function transcodeToOggOpus(
     ])
     const data = await ffmpeg.readFile(outputName)
     const bytes =
-      data instanceof Uint8Array ? data : new TextEncoder().encode(String(data))
+      data instanceof Uint8Array ? new Uint8Array(data) : new TextEncoder().encode(String(data))
     return new Blob([bytes], { type: "audio/ogg; codecs=opus" })
   } finally {
     try {
