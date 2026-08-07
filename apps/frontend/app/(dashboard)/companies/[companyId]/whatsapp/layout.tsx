@@ -1,5 +1,5 @@
 export default function WhatsAppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6">{children}</div>
+    <div className="flex h-full min-h-0 flex-col">{children}</div>
   )
 }

@@ -9,9 +9,14 @@
 		"start": "next start",
 		"lint": "eslint",
 		"format": "prettier --write \"**/*.{ts,tsx}\"",
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"postinstall": "mkdir -p public/ffmpeg && cp node_modules/@ffmpeg/ffmpeg/dist/esm/{worker,const,errors}.js public/ffmpeg/"
 	},
 	"dependencies": {
+		"@ffmpeg/core": "^0.12.10",
+		"@ffmpeg/ffmpeg": "^0.12.15",
+		"@ffmpeg/util": "^0.12.2",
+		"@next/env": "^16.3.0",
 		"@workspace/ui": "workspace:*",
 		"katex": "^0.18.1",
 		"lucide-react": "^1.28.0",

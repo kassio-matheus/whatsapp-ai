@@ -279,7 +279,7 @@ class R2Storage:
             canonical_query=canonical_query,
             amz_date=amz_date,
             date_stamp=date_stamp,
-            payload_hash=_UNSIGNED_PAYLOAD,   # <- era _SHA256_EMPTY
+            payload_hash=_UNSIGNED_PAYLOAD,
             headers=headers,
             signed_headers=signed_headers,
         )
@@ -293,6 +293,7 @@ class R2Storage:
             return self.public_url_pattern.format(key=key)
         if self.public_base_url:
             return f"{self.public_base_url}/{quote(key, safe='/')}"
+        
         return self.presigned_url(key=key)
 
 

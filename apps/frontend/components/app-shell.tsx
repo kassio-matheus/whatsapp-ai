@@ -481,7 +481,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         <SidebarRail />
       </Sidebar>
 
-      <SidebarInset>
+      <SidebarInset className="flex h-screen flex-col overflow-hidden">
         <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger className="-ms-1 md:hidden" />
           <div className="flex min-w-0 items-center gap-2 text-xs">

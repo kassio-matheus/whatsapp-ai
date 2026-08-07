@@ -19,13 +19,13 @@ const MAX_RECORDING_SECONDS = 300
 const BAR_COUNT = 72
 const BAR_GAP = 2
 
-// WhatsApp Cloud API só aceita, dos formatos que o MediaRecorder do
-// navegador consegue produzir nativamente: OGG com codec OPUS (Chrome,
-// Firefox, Android) e MP4/AAC (Safari, iOS) — que a Meta trata como
-// "Áudio MP4" (.m4a). audio/webm NÃO é aceito pela API, mesmo sendo o
-// formato padrão do MediaRecorder na maioria dos browsers baseados em
-// Chromium, então foi removido dos candidatos.
+// Formatos "de matéria-prima" que o MediaRecorder do navegador consegue
+// gravar nativamente. Nenhum deles é enviado direto ao WhatsApp — servem
+// só de entrada para a transcodificação real feita pelo ffmpeg.wasm em
+// transcodeToOggOpus(). Por isso podemos aceitar webm aqui sem problema.
 const MIME_CANDIDATES = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
   "audio/ogg;codecs=opus",
   "audio/mp4",
 ]
@@ -41,30 +41,116 @@ function pickRecorderMimeType() {
   )
 }
 
-function fileExtensionForMime(mimeType: string) {
-  // audio/ogg (somente codec OPUS) -> .ogg
+function nativeExtensionForMime(mimeType: string) {
+  if (mimeType.includes("webm")) {
+    return "webm"
+  }
   if (mimeType.includes("ogg")) {
     return "ogg"
   }
-  // audio/mp4 -> WhatsApp trata como "Áudio MP4", extensão .m4a
-  if (mimeType.includes("mp4") || mimeType.includes("m4a")) {
-    return "m4a"
+  if (mimeType.includes("mp4")) {
+    return "mp4"
   }
   return "bin"
 }
 
-// Garante que o tipo MIME final seja exatamente um dos aceitos pela
-// WhatsApp Cloud API (evita o erro mais comum: tipo MIME que não bate
-// com a extensão do arquivo).
-function normalizeMimeType(rawMimeType: string) {
-  if (rawMimeType.includes("ogg")) {
-    // A API exige explicitamente codecs=opus; audio/ogg "puro" é rejeitado.
-    return "audio/ogg; codecs=opus"
+// ---------------------------------------------------------------------
+// ffmpeg.wasm: carregado sob demanda (import dinâmico) e mantido como
+// singleton no módulo para ser reaproveitado entre gravações na mesma
+// sessão. Usa o core single-thread (@ffmpeg/core), que NÃO exige os
+// headers Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy no
+// servidor — só o core multi-thread (@ffmpeg/core-mt) exige isso.
+// ---------------------------------------------------------------------
+type FFmpegInstance = import("@ffmpeg/ffmpeg").FFmpeg
+
+let ffmpegSingleton: FFmpegInstance | null = null
+let ffmpegLoadPromise: Promise<FFmpegInstance> | null = null
+
+async function getFFmpeg(): Promise<FFmpegInstance> {
+  if (ffmpegSingleton) {
+    return ffmpegSingleton
   }
-  if (rawMimeType.includes("mp4") || rawMimeType.includes("m4a")) {
-    return "audio/mp4"
+  if (!ffmpegLoadPromise) {
+    ffmpegLoadPromise = (async () => {
+      const [{ FFmpeg }, { toBlobURL }] = await Promise.all([
+        import("@ffmpeg/ffmpeg"),
+        import("@ffmpeg/util"),
+      ])
+      const ffmpeg = new FFmpeg()
+      const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm"
+      await ffmpeg.load({
+        coreURL: await toBlobURL(
+          `${baseURL}/ffmpeg-core.js`,
+          "text/javascript"
+        ),
+        wasmURL: await toBlobURL(
+          `${baseURL}/ffmpeg-core.wasm`,
+          "application/wasm"
+        ),
+        classWorkerURL: `${window.location.origin}/ffmpeg/worker.js`,
+      })
+      ffmpegSingleton = ffmpeg
+      return ffmpeg
+    })().catch((err) => {
+      // Permite tentar carregar de novo numa próxima gravação se falhar.
+      console.error("[AudioRecorder] transcodificação falhou:", err)
+
+      ffmpegLoadPromise = null
+      throw err
+    })
   }
-  return rawMimeType
+  return ffmpegLoadPromise
+}
+
+/**
+ * Transcodifica qualquer áudio de entrada (webm/opus, mp4/aac, ogg/opus
+ * etc.) para um Ogg/Opus mono de verdade — nos bytes, não só no rótulo —
+ * exatamente como a WhatsApp Cloud API exige. Isso elimina o problema de
+ * navegadores que "muxam" Opus dentro de um contêiner MP4 sem o áudio
+ * estar de fato em AAC (o que a Meta rejeita como application/octet-stream).
+ */
+async function transcodeToOggOpus(
+  rawBlob: Blob,
+  rawExtension: string
+): Promise<Blob> {
+  const { fetchFile } = await import("@ffmpeg/util")
+  const ffmpeg = await getFFmpeg()
+
+  const inputName = `input-${Date.now()}.${rawExtension}`
+  const outputName = `output-${Date.now()}.ogg`
+
+  await ffmpeg.writeFile(inputName, await fetchFile(rawBlob))
+  try {
+    await ffmpeg.exec([
+      "-i",
+      inputName,
+      "-ac",
+      "1", // mono — exigido pela WhatsApp Cloud API para Ogg
+      "-c:a",
+      "libopus",
+      "-b:a",
+      "32k",
+      "-vn",
+      outputName,
+    ])
+    const data = await ffmpeg.readFile(outputName)
+    const bytes =
+      data instanceof Uint8Array ? data : new TextEncoder().encode(String(data))
+    return new Blob([bytes], { type: "audio/ogg; codecs=opus" })
+  } finally {
+    try {
+      await ffmpeg.deleteFile(inputName)
+    } catch (err) {
+      console.log(err)
+      // ignore
+    }
+    try {
+      await ffmpeg.deleteFile(outputName)
+    } catch (err) {
+      console.log(err)
+      // ignore
+    }
+  }
 }
 
 function formatClock(totalSeconds: number) {
@@ -109,14 +195,21 @@ function AudioRecorder({
   onError?: (message: string | null) => void
 }) {
   const [status, setStatus] = React.useState<
-    "idle" | "recording" | "preview" | "uploading"
+    "idle" | "recording" | "converting" | "preview" | "uploading"
   >("idle")
   const [recordingSeconds, setRecordingSeconds] = React.useState(0)
   const [previewSeconds, setPreviewSeconds] = React.useState(0)
 
   const mediaRecorderRef = React.useRef<MediaRecorder | null>(null)
   const chunksRef = React.useRef<Blob[]>([])
-  const recordedBlobRef = React.useRef<Blob | null>(null)
+  // Blob no formato nativo do navegador — usado só para tocar o preview
+  // local (sempre tocável no mesmo navegador que gravou).
+  const nativeBlobRef = React.useRef<Blob | null>(null)
+  const nativeExtensionRef = React.useRef<string>("webm")
+  // Blob já transcodificado para Ogg/Opus mono real — é o que de fato
+  // vai no upload para a WhatsApp Cloud API.
+  const uploadBlobRef = React.useRef<Blob | null>(null)
+  const uploadPromiseRef = React.useRef<Promise<Blob> | null>(null)
   const streamRef = React.useRef<MediaStream | null>(null)
   const audioContextRef = React.useRef<AudioContext | null>(null)
   const analyserRef = React.useRef<AnalyserNode | null>(null)
@@ -145,8 +238,9 @@ function AudioRecorder({
     streamRef.current?.getTracks().forEach((track) => {
       try {
         track.stop()
-      } catch {
+      } catch (err) {
         // ignore
+        console.log(err)
       }
     })
     streamRef.current = null
@@ -177,12 +271,7 @@ function AudioRecorder({
     }
     const mimeType = pickRecorderMimeType()
     if (!mimeType) {
-      // Nenhum dos formatos aceitos pela WhatsApp Cloud API (ogg/opus ou
-      // mp4) é suportado por este navegador — melhor recusar do que
-      // gravar em webm e falhar no envio depois.
-      reportError(
-        "This browser can't record audio in a WhatsApp-compatible format (OGG/Opus or MP4)."
-      )
+      reportError("Audio recording is not supported in this browser.")
       return
     }
     reportError(null)
@@ -193,17 +282,18 @@ function AudioRecorder({
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-          // A WhatsApp Cloud API só aceita OGG mono (áudio OPUS de
-          // canal único), então já capturamos em mono na origem.
           channelCount: 1,
         },
       })
-    } catch {
+    } catch (err) {
+      console.log(err)
       reportError("Microphone access was denied or no microphone is available.")
       return
     }
     chunksRef.current = []
-    recordedBlobRef.current = null
+    nativeBlobRef.current = null
+    uploadBlobRef.current = null
+    uploadPromiseRef.current = null
     finalizedRef.current = false
     streamRef.current = stream
     try {
@@ -216,7 +306,8 @@ function AudioRecorder({
         source.connect(analyserRef.current)
         micSourceRef.current = source
       }
-    } catch {
+    } catch (err) {
+      console.log(err)
       // Live visualization is optional; recording still works without it.
     }
 
@@ -263,10 +354,40 @@ function AudioRecorder({
     if (recorder && recorder.state !== "inactive") {
       try {
         recorder.stop()
-      } catch {
+      } catch (err) {
+        console.log(err)
         // The stop event may already have fired.
       }
     }
+  }
+
+  // Dispara (ou reaproveita) a transcodificação para Ogg/Opus real.
+  // Chamada tanto logo após a gravação parar (para converter em segundo
+  // plano enquanto a pessoa revê a gravação) quanto, de forma garantida,
+  // dentro de handleSend antes do upload.
+  function ensureUploadBlob(): Promise<Blob> {
+    if (uploadBlobRef.current) {
+      return Promise.resolve(uploadBlobRef.current)
+    }
+    if (uploadPromiseRef.current) {
+      return uploadPromiseRef.current
+    }
+    const raw = nativeBlobRef.current
+    if (!raw) {
+      return Promise.reject(new Error("No recording available"))
+    }
+    const promise = transcodeToOggOpus(raw, nativeExtensionRef.current)
+      .then((ogg) => {
+        uploadBlobRef.current = ogg
+        return ogg
+      })
+      .catch((err) => {
+        console.log(err)
+        uploadPromiseRef.current = null
+        throw err
+      })
+    uploadPromiseRef.current = promise
+    return promise
   }
 
   async function finalizeRecording(mimeType: string) {
@@ -284,12 +405,10 @@ function AudioRecorder({
     playbackTimeRef.current = 0
     isPlayingRef.current = false
 
-    // Normaliza o tipo MIME do Blob para o valor exato que a WhatsApp
-    // Cloud API espera (ex.: "audio/ogg; codecs=opus"), evitando o erro
-    // de "tipo MIME incompatível com a extensão" no envio.
-    const normalizedMimeType = normalizeMimeType(mimeType)
-    const blob = new Blob(chunksRef.current, { type: normalizedMimeType })
-    recordedBlobRef.current = blob
+    nativeExtensionRef.current = nativeExtensionForMime(mimeType)
+    const blob = new Blob(chunksRef.current, { type: mimeType })
+    nativeBlobRef.current = blob
+
     let decodedDuration = 0
     try {
       const context = audioContextRef.current
@@ -317,7 +436,8 @@ function AudioRecorder({
           waveformRef.current = bars
         }
       }
-    } catch {
+    } catch (err) {
+      console.log(err)
       decodedDuration = 0
     }
     if (!waveformRef.current || decodedDuration === 0) {
@@ -329,9 +449,26 @@ function AudioRecorder({
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current)
     }
+    // O preview toca o blob nativo (o mesmo que o navegador gravou),
+    // garantindo que sempre haja suporte de reprodução.
     objectUrlRef.current = URL.createObjectURL(blob)
     setPreviewSeconds(decodedDuration)
-    setStatus("preview")
+
+    // Começa a converter para Ogg/Opus real em segundo plano assim que a
+    // gravação termina, para que o envio depois seja quase instantâneo.
+    setStatus("converting")
+    try {
+      await ensureUploadBlob()
+      reportError(null)
+    } catch (err) {
+      console.error("[AudioRecorder] transcodificação falhou:", err)
+
+      reportError(
+        "Could not convert the recording to a WhatsApp-compatible format. You can still try sending it."
+      )
+    } finally {
+      setStatus("preview")
+    }
   }
 
   function togglePlayback() {
@@ -362,24 +499,17 @@ function AudioRecorder({
     }
     setStatus("uploading")
     reportError(null)
-    const blob =
-      recordedBlobRef.current ??
-      (objectUrlRef.current
-        ? await (await fetch(objectUrlRef.current)).blob()
-        : null)
-    if (!blob) {
-      reportError("Could not read the recorded audio.")
-      setStatus("preview")
-      return
-    }
-    // Validação final de segurança: só deixa enviar se o tipo MIME do
-    // blob for exatamente um dos aceitos pela WhatsApp Cloud API.
-    const mimeType = normalizeMimeType(blob.type || "")
-    const isWhatsAppCompatible =
-      mimeType.startsWith("audio/ogg") || mimeType.startsWith("audio/mp4")
-    if (!isWhatsAppCompatible) {
+
+    let blob: Blob
+    try {
+      // Garante que existe (ou espera terminar) a versão transcodificada
+      // em Ogg/Opus real antes de subir qualquer coisa.
+      blob = await ensureUploadBlob()
+    } catch (err) {
+      console.error("[AudioRecorder] transcodificação falhou no envio:", err)
+
       reportError(
-        "Recorded audio is not in a WhatsApp-compatible format (OGG/Opus or MP4)."
+        "Could not convert the recording to a WhatsApp-compatible format."
       )
       setStatus("preview")
       return
@@ -389,12 +519,9 @@ function AudioRecorder({
       setStatus("preview")
       return
     }
-    const extension = fileExtensionForMime(mimeType)
-    const file = new File(
-      [blob],
-      `voice-message-${Date.now()}.${extension}`,
-      { type: mimeType }
-    )
+    const file = new File([blob], `voice-message-${Date.now()}.ogg`, {
+      type: "audio/ogg; codecs=opus",
+    })
     try {
       const url = await onUpload(file)
       await onSend({
@@ -408,6 +535,7 @@ function AudioRecorder({
       })
       resetToIdle()
     } catch (err) {
+      console.log(err)
       reportError(
         err instanceof Error ? err.message : "Could not upload the recording."
       )
@@ -439,7 +567,8 @@ function AudioRecorder({
         finalizedRef.current = true
         try {
           recorder.stop()
-        } catch {
+        } catch (err) {
+          console.log(err)
           // ignore
         }
       }
@@ -450,7 +579,9 @@ function AudioRecorder({
     }
     waveformRef.current = null
     drawingRef.current = "idle"
-    recordedBlobRef.current = null
+    nativeBlobRef.current = null
+    uploadBlobRef.current = null
+    uploadPromiseRef.current = null
     finalizedRef.current = false
   }
 
@@ -571,6 +702,20 @@ function AudioRecorder({
     context.restore()
   }
 
+  // Pré-carrega o ffmpeg.wasm assim que o componente monta, em segundo
+  // plano, para esconder a latência do download (~30MB) atrás do tempo
+  // que a pessoa leva gravando o áudio.
+  React.useEffect(() => {
+    if (disabled) {
+      return
+    }
+    void getFFmpeg().catch(() => {
+      // Silencioso aqui — se falhar, tentamos de novo quando a pessoa
+      // realmente gravar algo, e o erro será mostrado nesse momento.
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   React.useEffect(() => {
     return () => {
       cleanup()
@@ -615,6 +760,7 @@ function AudioRecorder({
   }
 
   const isRecording = status === "recording"
+  const isConverting = status === "converting"
   const isPreview = status === "preview"
 
   return (
@@ -651,6 +797,16 @@ function AudioRecorder({
           <LoaderCircle className="size-4 animate-spin text-primary" />
           <span className="text-[11px] text-muted-foreground">
             Saving the recording to R2…
+          </span>
+          <div className="h-1 w-28 overflow-hidden rounded-full bg-muted">
+            <div className="h-full w-1/2 animate-shimmer bg-[linear-gradient(90deg,transparent,color-mix(in_oklch,var(--primary)_70%,transparent),transparent)]" />
+          </div>
+        </div>
+      ) : isConverting ? (
+        <div className="flex h-9 w-full items-center justify-center gap-2">
+          <LoaderCircle className="size-4 animate-spin text-primary" />
+          <span className="text-[11px] text-muted-foreground">
+            Converting to Ogg/Opus for WhatsApp…
           </span>
           <div className="h-1 w-28 overflow-hidden rounded-full bg-muted">
             <div className="h-full w-1/2 animate-shimmer bg-[linear-gradient(90deg,transparent,color-mix(in_oklch,var(--primary)_70%,transparent),transparent)]" />
@@ -741,7 +897,7 @@ function AudioRecorder({
               size="icon"
               className="shrink-0"
               onClick={() => void handleSend()}
-              title="Upload to R2 and send as an audio message"
+              title="Convert (if needed) and send as an audio message"
               aria-label="Send audio message"
             >
               <Send className="size-4" />

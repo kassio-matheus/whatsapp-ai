@@ -74,6 +74,7 @@ const CONVERSATIONS_PAGE_SIZE = 100
 const MESSAGES_PAGE_SIZE = 100
 
 import { useQueryState } from "nuqs"
+import { ImageDialog } from "@/components/whatsapp/image_dialog"
 
 const STATUS_BADGE: Record<
   ConversationStatus,
@@ -922,29 +923,7 @@ export default function ConversationsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <WhatsAppSectionTabs companyId={companyId} active="conversations" />
-      <PageHeader
-        title="Conversations"
-        description="Live inbox for inbound and outbound WhatsApp messages."
-      >
-        <div className="flex items-center gap-2">
-          <Badge variant="secondary">
-            <Radio className="size-3 animate-pulse" />
-            Live sync
-          </Badge>
-          <Button
-            onClick={() => {
-              setEditingConversation(null)
-              setDialogOpen(true)
-            }}
-          >
-            <Plus />
-            New conversation
-          </Button>
-        </div>
-      </PageHeader>
-
+    <div className="flex h-full max-h-full flex-col gap-0">
       {conversations.length === 0 ? (
         <EmptyState
           icon={trimmedSearch || statusFilter !== "all" ? <Search /> : <Plus />}
@@ -983,9 +962,9 @@ export default function ConversationsPage() {
           }
         />
       ) : (
-        <div className="grid h-[75dvh] gap-3 lg:grid-cols-[320px_1fr]">
-          <Card className="p-0">
-            <div className="flex flex-col gap-2 border-b p-2">
+        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[320px_1fr]">
+          <Card className="flex min-h-0 flex-col p-0 gap-0">
+            <div className="flex flex-col gap-2 border-b p-2 ">
               <SearchInput
                 value={search}
                 onValueChange={setSearch}
@@ -1010,15 +989,28 @@ export default function ConversationsPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <span className="text-[10px] text-muted-foreground tabular-nums">
-                  {conversations.length}{" "}
-                  {conversations.length === 1
-                    ? "conversation"
-                    : "conversations"}
-                </span>
+
+                <Button
+                  onClick={() => {
+                    setEditingConversation(null)
+                    setDialogOpen(true)
+                  }}
+                >
+                  <Plus />
+                  New conversation
+                </Button>
               </div>
+
+              <span className="text-[10px] text-muted-foreground tabular-nums">
+                {conversations.length}{" "}
+                {conversations.length === 1 ? "conversation" : "conversations"}
+              </span>
             </div>
-            <ScrollArea className="h-[472px]">
+            
+            <ScrollArea
+              viewportRef={setMessagesViewport}
+              className="min-h-0 flex-1"
+            >
               <ul className="flex flex-col">
                 {conversations.map((conversation, index) => {
                   const contact = contacts.find(
@@ -1654,11 +1646,16 @@ function TemplateBubble({
 
 function MediaPreview({ message }: { message: WhatsAppMessage }) {
   const url = message.media_url ?? ""
-  const type = (message.metadata?.mime_type as string | undefined) ?? ""
+  const type =
+    message.message_type ??
+    (message.metadata?.mime_type as string | undefined) ??
+    ""
   const filename =
     (message.metadata?.filename as string | undefined) ?? url.split("/").pop()
 
   const mediaType = type.split("/")[0] ?? ""
+
+  const [dialogImageOpen, setDialogImageOpen] = React.useState(false)
 
   return (
     <div className="mb-2 overflow-hidden border border-black/10 dark:border-white/10">
@@ -1667,8 +1664,9 @@ function MediaPreview({ message }: { message: WhatsAppMessage }) {
         <img
           src={url}
           alt={filename ?? "Image"}
-          className="max-h-64 w-full object-cover"
+          className="max-h-64 w-full min-w-96 cursor-pointer object-cover"
           loading="lazy"
+          onClick={() => setDialogImageOpen(true)}
         />
       ) : mediaType === "video" ? (
         <video
@@ -1678,18 +1676,29 @@ function MediaPreview({ message }: { message: WhatsAppMessage }) {
           preload="metadata"
         />
       ) : mediaType === "audio" ? (
-        <audio src={url} controls className="w-full" preload="metadata" />
-      ) : (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 bg-muted/40 px-3 py-2 text-[11px] font-medium hover:underline"
-        >
-          <FileText className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate">{filename ?? "Download file"}</span>
-        </a>
-      )}
+        <audio
+          src={url}
+          controls
+          className="w-full min-w-80"
+          preload="metadata"
+        />
+      ) : null}
+
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-2 bg-muted/40 px-3 py-2 text-[11px] font-medium hover:underline"
+      >
+        <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="truncate">{filename ?? "Download file"}</span>
+      </a>
+
+      <ImageDialog
+        open={dialogImageOpen}
+        onOpenChange={(value) => setDialogImageOpen(value)}
+        preview_url={url}
+      />
     </div>
   )
 }

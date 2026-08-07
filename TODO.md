@@ -6,6 +6,8 @@ TODO Geral - Front-end e back-end
 - Permitir o envio de arquivos como forma de mensagem para a A.I dentro do A.I Chat
 
 - Melhorar o UI do MessageComponser, o envio de diferentes tipos de mensagens devem ser mais dinâmicos e realistas.
+- Criar pré-visualização altamente estética das mensagens de mídias
+- Remover o tempo de expiração de mídias no R2, ou aumentar para 30 dias.
 
 - Adicionar notificações globais na aplicação com efeitos sonoros
 - Remove a funcionalidade de e-mail (Complexidade desnecessária)
