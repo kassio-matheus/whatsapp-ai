@@ -72,7 +72,7 @@ function RegisterForm({ onSuccess }: { onSuccess: (email: string) => void }) {
     }
     if (password.length < PASSWORD_MIN_LENGTH) {
       setPasswordError(
-        `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`,
+        `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`
       )
       hasError = true
     }
@@ -189,7 +189,12 @@ function RegisterForm({ onSuccess }: { onSuccess: (email: string) => void }) {
         </CardContent>
 
         <CardFooter className="flex-col gap-3">
-          <Button type="submit" className="w-full" size="lg" disabled={isSubmitting}>
+          <Button
+            type="submit"
+            className="w-full"
+            size="lg"
+            disabled={isSubmitting}
+          >
             {isSubmitting ? (
               <LoaderCircle className="animate-spin" />
             ) : (
@@ -232,52 +237,18 @@ function RegisterSuccess({ email }: { email: string }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <CheckCircle2 className="size-4 text-primary" />
-          Check your email
+          Register successful!
         </CardTitle>
-        <CardDescription>
-          We sent a verification link to <strong>{email}</strong>. Click the
-          link to verify your account and sign in.
-        </CardDescription>
+        <CardDescription>Thanks for register.</CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col items-center gap-3 text-center">
-        <div className="flex size-12 items-center justify-center rounded-none border bg-muted/40 ring-1 ring-foreground/10">
-          <MailCheck className="size-5 text-primary" />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Didn&apos;t receive the email? Check your spam folder or resend it.
-        </p>
-      </CardContent>
+      <CardContent className="flex flex-col items-center gap-3 text-center"></CardContent>
       <CardFooter className="flex-col gap-3">
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full"
-          size="lg"
-          disabled={isResending}
-          onClick={handleResend}
+        <Link
+          href="/login"
+          className="font-medium text-foreground underline-offset-4 hover:underline"
         >
-          {isResending ? <LoaderCircle className="animate-spin" /> : null}
-          Resend verification email
-        </Button>
-        {resendState === "success" ? (
-          <p className="text-xs text-primary" role="status">
-            Verification email resent.
-          </p>
-        ) : null}
-        {resendState === "error" ? (
-          <p className="text-xs text-destructive" role="alert">
-            Failed to resend the email. Please try again.
-          </p>
-        ) : null}
-        <p className="text-xs text-muted-foreground">
-          Already verified?{" "}
-          <Link
-            href="/login"
-            className="font-medium text-foreground underline-offset-4 hover:underline"
-          >
-            Sign in
-          </Link>
-        </p>
+          Sign in now
+        </Link>
       </CardFooter>
     </Card>
   )
@@ -285,7 +256,7 @@ function RegisterSuccess({ email }: { email: string }) {
 
 export default function RegisterPage() {
   const [registeredEmail, setRegisteredEmail] = React.useState<string | null>(
-    null,
+    null
   )
 
   return (

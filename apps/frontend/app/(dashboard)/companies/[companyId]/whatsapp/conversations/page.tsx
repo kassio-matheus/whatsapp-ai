@@ -963,8 +963,8 @@ export default function ConversationsPage() {
         />
       ) : (
         <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[320px_1fr]">
-          <Card className="flex min-h-0 flex-col p-0 gap-0">
-            <div className="flex flex-col gap-2 border-b p-2 ">
+          <Card className="flex min-h-0 flex-col gap-0 p-0">
+            <div className="flex flex-col gap-2 border-b p-2">
               <SearchInput
                 value={search}
                 onValueChange={setSearch}
@@ -1006,7 +1006,7 @@ export default function ConversationsPage() {
                 {conversations.length === 1 ? "conversation" : "conversations"}
               </span>
             </div>
-            
+
             <ScrollArea
               viewportRef={setMessagesViewport}
               className="min-h-0 flex-1"
@@ -1418,6 +1418,15 @@ function MessageBubble({
             "border-destructive/20 bg-destructive/10"
         )}
       >
+        {message.message_type == "location" && (
+          <div className="grid gap-0.5">
+            <span className="font-bold">Location:</span>
+            <span>{message.metadata?.location?.name || ""}</span>
+            <span>{message.metadata?.location?.address || ""}</span>
+            <span>LTD: {message.metadata?.location?.latitude || ""}</span>
+            <span>LOGT: {message.metadata?.location?.longitude || ""}</span>
+          </div>
+        )}
         {message.media_url ? <MediaPreview message={message} /> : null}
         {message.content ? (
           <p className="break-words whitespace-pre-wrap">{message.content}</p>

@@ -125,7 +125,7 @@ export type WhatsAppMessage = {
   content: string | null
   media_url: string | null
   status: MessageStatus
-  metadata: Record<string, unknown>
+  metadata: any
   sent_at: string | null
   is_active: boolean
   created_at: string

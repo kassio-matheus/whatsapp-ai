@@ -31,16 +31,6 @@ class Settings(BaseSettings):
 
     FRONTEND_HOST: str = "http://localhost:3000"
 
-    EMAILS_ENABLED: bool = False
-    EMAILS_FROM_NAME: str = "API"
-    EMAILS_FROM_EMAIL: str = "noreply@api.com"
-    SMTP_HOST: str = "localhost"
-    SMTP_PORT: int = 587
-    SMTP_TLS: bool = True
-    SMTP_SSL: bool = False
-    SMTP_USER: str = ""
-    SMTP_PASSWORD: str = ""
-
     ACCESS_TOKEN_EXPIRES_MINUTES: int = 10080
     EMAIL_VERIFICATION_EXPIRES_MINUTES: int = 60
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30

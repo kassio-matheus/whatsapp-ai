@@ -135,7 +135,9 @@ async function transcodeToOggOpus(
     ])
     const data = await ffmpeg.readFile(outputName)
     const bytes =
-      data instanceof Uint8Array ? new Uint8Array(data) : new TextEncoder().encode(String(data))
+      data instanceof Uint8Array
+        ? new Uint8Array(data)
+        : new TextEncoder().encode(String(data))
     return new Blob([bytes], { type: "audio/ogg; codecs=opus" })
   } finally {
     try {
@@ -490,7 +492,9 @@ function AudioRecorder({
     }
     playbackTimeRef.current = audio.currentTime
     durationRef.current = audio.duration || durationRef.current
-    setPreviewSeconds(durationRef.current)
+    if (durationRef.current !== Infinity) {
+      setPreviewSeconds(durationRef.current)
+    }
   }
 
   async function handleSend() {

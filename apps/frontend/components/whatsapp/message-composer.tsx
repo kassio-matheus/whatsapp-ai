@@ -49,10 +49,10 @@ const MESSAGE_TYPES = [
   { value: "document", label: "Document", icon: FileText },
   { value: "sticker", label: "Sticker", icon: SmilePlus },
   { value: "location", label: "Location", icon: MapPin },
-  { value: "contacts", label: "Contacts", icon: Users },
-  { value: "interactive", label: "Interactive", icon: MessageCircleMore },
+  //{ value: "contacts", label: "Contacts", icon: Users },
+  //{ value: "interactive", label: "Interactive", icon: MessageCircleMore },
   { value: "template", label: "Template", icon: FileText },
-  { value: "reaction", label: "Reaction", icon: SmilePlus },
+  //{ value: "reaction", label: "Reaction", icon: SmilePlus },
 ]
 
 type TemplateField = {
@@ -203,6 +203,12 @@ function MessageComposer({
   const [templateValues, setTemplateValues] = React.useState<
     Record<string, string>
   >({})
+
+  const [coords, setCoords] = React.useState<{
+    lat: number
+    lng: number
+  } | null>(null)
+
   const [latitude, setLatitude] = React.useState("")
   const [longitude, setLongitude] = React.useState("")
   const [locationName, setLocationName] = React.useState("")
@@ -580,6 +586,113 @@ function MessageComposer({
           />
         </div>
       ) : null}
+
+      {messageType === "location" && (
+        <Button
+          className="mb-2 w-full"
+          onClick={async () => {
+            if (!("geolocation" in navigator)) {
+              console.error("Seu navegador não suporta geolocalização.")
+              return
+            }
+
+            try {
+              // Verifica o estado da permissão (quando suportado)
+              if ("permissions" in navigator) {
+                const permission = await navigator.permissions.query({
+                  name: "geolocation",
+                })
+
+                if (permission.state === "denied") {
+                  alert(
+                    "A permissão de localização foi negada. Habilite-a nas configurações do navegador."
+                  )
+                  return
+                }
+              }
+
+              const position = await new Promise<GeolocationPosition>(
+                (resolve, reject) => {
+                  navigator.geolocation.getCurrentPosition(resolve, reject, {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0,
+                  })
+                }
+              )
+
+              const { latitude, longitude, accuracy } = position.coords
+
+              setLatitude(latitude.toString())
+              setLongitude(longitude.toString())
+
+              const response = await fetch(
+                `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}`,
+                {
+                  headers: {
+                    Accept: "application/json",
+                  },
+                }
+              )
+
+              if (!response.ok) {
+                throw new Error("Não foi possível obter o endereço.")
+              }
+
+              const location = await response.json()
+
+              const result = {
+                latitude,
+                longitude,
+                accuracy,
+                name: location.name ?? "",
+                displayName: location.display_name,
+                street: location.address?.road ?? "",
+                number: location.address?.house_number ?? "",
+                neighborhood:
+                  location.address?.suburb ??
+                  location.address?.neighbourhood ??
+                  "",
+                city:
+                  location.address?.city ??
+                  location.address?.town ??
+                  location.address?.village ??
+                  "",
+                state: location.address?.state ?? "",
+                country: location.address?.country ?? "",
+                zipCode: location.address?.postcode ?? "",
+              }
+
+              setLocationName(result.name)
+
+              setLocationAddress(
+                `${result.street}, ${result.number || "S/N"}, ${result.state}, ${result.city} - ${result.zipCode}`
+              )
+            } catch (error) {
+              if (error instanceof GeolocationPositionError) {
+                switch (error.code) {
+                  case error.PERMISSION_DENIED:
+                    alert("Permissão de localização negada.")
+                    break
+                  case error.POSITION_UNAVAILABLE:
+                    alert("Não foi possível obter sua localização.")
+                    break
+                  case error.TIMEOUT:
+                    alert("Tempo limite excedido ao obter a localização.")
+                    break
+                  default:
+                    alert(error.message)
+                }
+              } else {
+                console.error(error)
+                alert("Ocorreu um erro ao buscar sua localização.")
+              }
+            }
+          }}
+        >
+          Compartilhar localização
+        </Button>
+      )}
 
       {messageType === "template" ? (
         <div className="mb-3 overflow-hidden border border-primary/20 bg-primary/[0.03]">

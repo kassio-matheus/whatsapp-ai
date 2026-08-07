@@ -41,78 +41,13 @@ def register_user(*, session: Session, user: UserRegister) -> None:
         email=str(user.email).lower(),
         hashed_password=hashed_password,
         is_active=True,
-        is_verified=not settings.EMAILS_ENABLED,
+        is_verified=True,
         is_super_admin=True,
     )
     session.add(db_user)
     session.commit()
     session.refresh(db_user)
 
-    token = security.create_email_verification_token(user.email)
-    verification_link = f"{settings.FRONTEND_HOST}/verify-email#token={token}"
-
-    notification.send(
-        Notification(
-            to=user.email,
-            subject=f"Welcome to {settings.PROJECT_NAME}",
-            body=f"Verify your email: {verification_link}",
-        )
-    )
-
-
-def verify_user_email(*, session: Session, token: str) -> Token:
-    """Verify user email."""
-    email = security.verify_token(
-        token=token,
-        purpose=security.EMAIL_VERIFICATION_PURPOSE,
-    )
-    if not email:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid token",
-        )
-    db_user = get_user_by_email(session=session, email=email)
-    if not db_user:
-        raise HTTPException(status_code=400, detail="Invalid token")
-    if db_user.is_verified:
-        raise HTTPException(
-            status_code=400,
-            detail="Email already verified",
-        )
-    db_user.is_verified = True
-    db_user.updated_at = datetime.datetime.now(datetime.UTC)
-    session.add(db_user)
-    session.commit()
-    session.refresh(db_user)
-    access_token = security.create_access_token(
-        subject=db_user.id,
-        expires_delta=datetime.timedelta(minutes=settings.ACCESS_TOKEN_EXPIRES_MINUTES),
-    )
-    access_token_obj = Token(
-        access_token=access_token,
-        token_type="bearer",
-    )
-    return access_token_obj
-
-
-def resend_verification_email(*, session: Session, email: str) -> bool:
-    """Resend verification email."""
-    db_user = get_user_by_email(session=session, email=email)
-    if not db_user:
-        return True
-    if db_user.is_verified:
-        return True
-    token = security.create_email_verification_token(email=db_user.email)
-    verification_link = f"{settings.FRONTEND_HOST}/verify-email#token={token}"
-
-    notification.send(
-        Notification(
-            to=db_user.email,
-            subject=f"Verify your {settings.PROJECT_NAME} account",
-            body=f"Verify your email: {verification_link}",
-        )
-    )
-    return True
 
 
 def authenticate_user(*, session: Session, email: str, password: str) -> Token:
@@ -125,19 +60,21 @@ def authenticate_user(*, session: Session, email: str, password: str) -> Token:
             detail="Invalid email or password",
         )
     if not db_user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(
+            status_code=401, detail="Invalid email or password")
     if not db_user.is_active:
         raise HTTPException(
             status_code=403,
             detail="Account deactivated",
         )
 
-    if settings.EMAILS_ENABLED and not db_user.is_verified:
-        raise HTTPException(status_code=403, detail="Email not verified")
+    if not db_user.is_verified:
+        raise HTTPException(status_code=403, detail="User not verified")
 
     access_token = security.create_access_token(
         subject=db_user.id,
-        expires_delta=datetime.timedelta(minutes=settings.ACCESS_TOKEN_EXPIRES_MINUTES),
+        expires_delta=datetime.timedelta(
+            minutes=settings.ACCESS_TOKEN_EXPIRES_MINUTES),
     )
 
     token = Token(
@@ -145,31 +82,6 @@ def authenticate_user(*, session: Session, email: str, password: str) -> Token:
         token_type="bearer",
     )
     return token
-
-
-def recover_password(*, session: Session, email: str) -> bool:
-    db_user = get_user_by_email(session=session, email=email)
-    if not db_user:
-        return True
-
-    token = security.generate_password_reset_token()
-    db_user.password_reset_token_hash = security.hash_token(token)
-    db_user.password_reset_token_expires_at = (
-        datetime.datetime.now(datetime.UTC).replace(tzinfo=None)
-        + datetime.timedelta(minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
-    )
-    session.add(db_user)
-    session.commit()
-    reset_link = f"{settings.FRONTEND_HOST}/reset-password#token={token}"
-
-    notification.send(
-        Notification(
-            to=email,
-            subject=f"{settings.PROJECT_NAME} - Password Recovery",
-            body=f"Reset your password: {reset_link}",
-        )
-    )
-    return True
 
 
 def reset_password(*, session: Session, new_password: NewPassword) -> bool:

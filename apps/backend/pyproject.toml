@@ -23,6 +23,7 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     "pyjwt>=2.13.0",
     "sqlmodel>=0.0.39",
+    "urllib3==1.26.18",
     "uvicorn[standard]>=0.52.0",
     "watchfiles>=1.2.0",
 ]

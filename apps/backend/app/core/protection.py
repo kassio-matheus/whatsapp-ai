@@ -20,10 +20,6 @@ _GENERAL_RULE = RateLimitRule(requests=120, window_seconds=60)
 _RULES = {
     "/auth/login": RateLimitRule(requests=5, window_seconds=60),
     "/auth/register": RateLimitRule(requests=5, window_seconds=3600),
-    "/auth/recover-password": RateLimitRule(requests=5, window_seconds=3600),
-    "/auth/resend-verification-email": RateLimitRule(
-        requests=5, window_seconds=3600
-    ),
     "/auth/reset-password": RateLimitRule(requests=5, window_seconds=3600),
 }
 _CHAT_RULE = RateLimitRule(requests=20, window_seconds=60)

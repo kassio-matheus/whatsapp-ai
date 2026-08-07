@@ -38,50 +38,8 @@ def register_user(
 ) -> Message:
     service.register_user(session=session, user=user)
     return Message(
-        message="User registered successfully. Please check your email to verify your account."
+        message="User registered successfully."
     )
-
-
-@router.post(
-    "/verify-email",
-    status_code=200,
-    response_model=Token,
-    summary="Verify email address",
-    description=(
-        "Confirm email ownership using the token received at registration. "
-        "Returns a JWT access token once verified."
-    ),
-    responses={400: {"description": "Invalid token or email already verified"}},
-)
-def verify_email(
-    session: SessionDep,
-    token: str = Query(
-        description="Verification token sent to the user's email.",
-        examples=["email-verification-token"],
-    ),
-) -> Token:
-    return service.verify_user_email(session=session, token=token)
-
-
-@router.post(
-    "/resend-verification-email",
-    status_code=200,
-    response_model=Message,
-    summary="Resend verification email",
-    description=(
-        "Request a new verification token. Always returns success so that "
-        "unregistered emails cannot be discovered."
-    ),
-)
-def resend_verification_email(
-    session: SessionDep,
-    email: EmailStr = Query(  # noqa: B008
-        description="Email to resend the verification message to.",
-        examples=["user@example.com"],
-    ),
-) -> Message:
-    service.resend_verification_email(session=session, email=email)
-    return Message(message="Verification email resent successfully.")
 
 
 @router.post(
@@ -103,27 +61,6 @@ def login(body: LoginRequest, session: SessionDep) -> Token:
     return service.authenticate_user(
         session=session, email=body.email, password=body.password
     )
-
-
-@router.post(
-    "/recover-password",
-    status_code=200,
-    response_model=Message,
-    summary="Request password recovery",
-    description=(
-        "Request a password reset token. Always returns success so that "
-        "unregistered emails cannot be discovered."
-    ),
-)
-def recover_password(
-    session: SessionDep,
-    email: EmailStr = Query(  # noqa: B008
-        description="Email of the account to recover.",
-        examples=["user@example.com"],
-    ),
-) -> Message:
-    service.recover_password(session=session, email=email)
-    return Message(message="Password recovery email sent successfully.")
 
 
 @router.post(

@@ -32,23 +32,6 @@ def create_access_token(subject: str | Any, expires_delta: datetime.timedelta) -
     return encoded_jwt
 
 
-def create_email_verification_token(email: str) -> str:
-    delta = datetime.timedelta(minutes=settings.EMAIL_VERIFICATION_EXPIRES_MINUTES)
-    now = datetime.datetime.now(datetime.UTC)
-    expires = now + delta
-    exp = expires.timestamp()
-    encoded_jwt = jwt.encode(
-        {
-            "exp": exp,
-            "nbf": now,
-            "sub": email,
-            "purpose": EMAIL_VERIFICATION_PURPOSE,
-        },
-        settings.SECRET_KEY,
-        algorithm=ALGORITHM,
-    )
-    return encoded_jwt
-
 
 def generate_password_reset_token() -> str:
     return secrets.token_urlsafe(32)

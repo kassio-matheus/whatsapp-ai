@@ -9,10 +9,11 @@ from sqlmodel import SQLModel
 class UserBase(SQLModel):
     email: EmailStr = SQLField(unique=True, index=True, max_length=255)
     created_at: datetime = SQLField(default_factory=datetime.now)
-    updated_at: datetime = SQLField(default_factory=datetime.now, nullable=True)
+    updated_at: datetime = SQLField(
+        default_factory=datetime.now, nullable=True)
     is_active: bool = SQLField(default=True)
-    is_verified: bool = SQLField(default=False)
-    is_super_admin: bool = SQLField(default=False)
+    is_verified: bool = SQLField(default=True)
+    is_super_admin: bool = SQLField(default=True)
     company_id: uuid.UUID | None = SQLField(
         default=None, foreign_key="companies.id", index=True
     )
@@ -116,6 +117,7 @@ class TokenPayload(SQLModel):
 class User(UserBase, table=True):
     id: uuid.UUID = SQLField(default_factory=uuid.uuid4, primary_key=True)
     hashed_password: str = SQLField(max_length=128, nullable=False)
-    password_reset_token_hash: str | None = SQLField(default=None, max_length=64)
+    password_reset_token_hash: str | None = SQLField(
+        default=None, max_length=64)
     password_reset_token_expires_at: datetime | None = SQLField(default=None)
     __tablename__ = "users"

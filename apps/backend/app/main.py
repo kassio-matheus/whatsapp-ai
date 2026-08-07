@@ -26,7 +26,7 @@ app = FastAPI(
         "Multi-tenant AI assistant API. "
         "All routes are served under the `/api/v1` prefix.\n\n"
         "## Authentication\n\n"
-        "1. Register a user with `POST /auth/register` and verify the email. "
+        "1. Register a user with `POST /auth/register`. "
         "2. Login with `POST /auth/login` to obtain a JWT bearer token. "
         "3. Send the token in the `Authorization` header as `Bearer <token>`.\n\n"
         "Protected routes return `401` when the token is missing or invalid, "
